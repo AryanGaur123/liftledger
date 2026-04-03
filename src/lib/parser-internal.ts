@@ -124,6 +124,92 @@ function parseSheet(values: unknown[][]): FlatRow[] {
 }
 
 /**
+ * Parse a generic flat-table sheet (already fetched as rows+headers) into FlatRows.
+ * Used for multi-sheet Google Sheets workbooks that aren't the custom template.
+ */
+export function parseGenericGoogleSheetsFlatRows(
+  rows: unknown[][],
+  headers: string[],
+  sheetName: string
+): FlatRow[] {
+  // Inline column detection (mirrors analytics.ts detectColumns)
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const nh = headers.map(normalize);
+  const find = (aliases: string[]) => {
+    for (const a of aliases) {
+      const n = normalize(a);
+      const i = nh.indexOf(n);
+      if (i >= 0) return i;
+    }
+    for (const a of aliases) {
+      const n = normalize(a);
+      const i = nh.findIndex((h) => h.includes(n) || n.includes(h));
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
+
+  const dateCol = find(["date", "day", "training date", "session"]);
+  const exCol = find(["exercise", "movement", "lift", "name"]);
+  const setsCol = find(["sets", "set", "working sets"]);
+  const repsCol = find(["reps", "rep", "repetitions"]);
+  const weightCol = find(["weight", "load", "kg", "lbs"]);
+  const rpeCol = find(["rpe", "rir", "intensity"]);
+
+  if (exCol < 0) return [];
+
+  const result: FlatRow[] = [];
+  let lastDate: Date | null = null;
+
+  for (const row of rows) {
+    const r = row as any[];
+    if (!r || r.every((c) => c === null || c === undefined || c === "")) continue;
+
+    const rawDate = dateCol >= 0 ? r[dateCol] : null;
+    const parsedDate = rawDate ? parseRawDate(rawDate) : null;
+    const date = parsedDate || lastDate;
+    if (parsedDate) lastDate = parsedDate;
+    if (!date) continue;
+
+    const movement = String(r[exCol] ?? "").trim();
+    if (!movement || movement.length < 2) continue;
+
+    const sets = toNum(setsCol >= 0 ? r[setsCol] : 1) ?? 1;
+    const reps = toNum(repsCol >= 0 ? r[repsCol] : null);
+    const loadKg = toNum(weightCol >= 0 ? r[weightCol] : null) ?? 0;
+    const rpe = rpeCol >= 0 ? toNum(r[rpeCol]) : null;
+
+    if (reps === null || reps <= 0) continue;
+
+    const weekStart = getWeekStart(date);
+    result.push({
+      date,
+      weekLabel: formatWeekLabel(weekStart),
+      dayLabel: "",
+      movement,
+      sets,
+      reps,
+      loadKg,
+      rpe,
+      volume: null,
+    });
+  }
+  return result;
+}
+
+function parseRawDate(raw: unknown): Date | null {
+  if (!raw) return null;
+  if (typeof raw === "number") {
+    const d = serialToDate(raw);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const s = String(raw).trim();
+  if (!s) return null;
+  const d = new Date(s);
+  return !isNaN(d.getTime()) && d.getFullYear() > 2000 ? d : null;
+}
+
+/**
  * Fetches all block sheets from Google Sheets API and parses them into FlatRows.
  */
 export async function parseAllGoogleSheetBlocks(

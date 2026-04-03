@@ -237,54 +237,152 @@ export function parseXlsxBuffer(buffer: Buffer): SheetData {
   }) as unknown[][];
 
   if (isAryanTemplate(firstData)) {
-    // Parse ALL block sheets and combine — tag each row with its sheet name
+    // Custom block-per-sheet template: parse ALL sheets, tag each row with sheet name
+    return parseMultiSheetWorkbook(workbook, candidates, true);
+  }
+
+  // Generic flat table — check if multiple sheets all look like training data
+  const scoredSheets: { name: string; score: number; headers: string[]; data: unknown[][] }[] = [];
+
+  for (const name of candidates) {
+    const ws = workbook.Sheets[name];
+    if (!ws) continue;
+    const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null }) as unknown[][];
+    if (data.length < 2) continue;
+    const headers = (data[0] ?? []).map((c) => String(c ?? "").trim());
+    const score = scoreGenericSheet(headers);
+    if (score >= 3) { // must have at least exercise + one numeric column
+      scoredSheets.push({ name, score, headers, data });
+    }
+  }
+
+  // If multiple sheets look like training data, combine them all (multi-block)
+  if (scoredSheets.length > 1) {
+    return parseMultiSheetWorkbook(workbook, candidates, false);
+  }
+
+  // Single sheet — just return it
+  const best = scoredSheets[0] ?? { name: candidates[0], headers: [], data: [] };
+  if (!best.data || best.data.length === 0) {
+    const ws = workbook.Sheets[best.name];
+    const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true }) as unknown[][];
+    best.headers = (data[0] ?? []).map((c) => String(c ?? "").trim());
+    best.data = data;
+  }
+  const singleRows = (best.data.slice(1) as unknown[][]).filter(
+    (r) => r && r.some((c) => c !== null && c !== undefined && String(c).trim())
+  );
+  return { headers: best.headers, rows: singleRows, sheetName: best.name };
+}
+
+/**
+ * Parse all candidate sheets from a workbook, tagging each row with its sheet name.
+ * Returns a FlatRow[] (cast as SheetData) for block-aware analytics.
+ */
+function parseMultiSheetWorkbook(
+  workbook: XLSX.WorkBook,
+  candidates: string[],
+  isCustomTemplate: boolean
+): SheetData {
+  if (isCustomTemplate) {
+    // Custom template: use structural parser
+    const allRows: FlatRow[] = [];
+    for (const name of candidates) {
+      const ws = workbook.Sheets[name];
+      if (!ws) continue;
+      const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null }) as unknown[][];
+      const parsed = parseAryanSheet(data, name);
+      for (const r of parsed) r.blockName = name;
+      allRows.push(...parsed);
+    }
+    if (allRows.length === 0) return { headers: [], rows: [], sheetName: "All Blocks" };
+    allRows.sort((a, b) => a.date.getTime() - b.date.getTime());
+    return allRows as unknown as SheetData;
+  } else {
+    // Generic flat-table sheets: use first sheet's headers, combine all rows
+    // Detect shared headers from the first valid sheet
+    let sharedHeaders: string[] = [];
     const allRows: FlatRow[] = [];
 
     for (const name of candidates) {
       const ws = workbook.Sheets[name];
       if (!ws) continue;
-      const data = XLSX.utils.sheet_to_json(ws, {
-        header: 1, raw: true, defval: null,
-      }) as unknown[][];
-      const parsed = parseAryanSheet(data, name);
+      const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null }) as unknown[][];
+      if (data.length < 2) continue;
+      const headers = (data[0] ?? []).map((c) => String(c ?? "").trim());
+      if (sharedHeaders.length === 0) sharedHeaders = headers;
+      const score = scoreGenericSheet(headers);
+      if (score < 3) continue;
+
+      // Parse rows from this sheet as FlatRows using column detection
+      const parsed = parseGenericSheetAsFlatRows(data, headers, name);
       for (const r of parsed) r.blockName = name;
       allRows.push(...parsed);
     }
 
-    if (allRows.length === 0) {
-      return { headers: [], rows: [], sheetName: "All Blocks" };
-    }
-
-    // Sort by date ascending
+    if (allRows.length === 0) return { headers: [], rows: [], sheetName: "All Blocks" };
     allRows.sort((a, b) => a.date.getTime() - b.date.getTime());
-    // Return as FlatRow[] so the API route can preserve blockName
     return allRows as unknown as SheetData;
   }
+}
 
-  // Generic flat table — find best sheet
-  let bestSheet = candidates[0];
-  let bestScore = 0;
+/**
+ * Parse a generic flat-table sheet into FlatRows using column detection.
+ */
+function parseGenericSheetAsFlatRows(data: unknown[][], headers: string[], sheetName: string): FlatRow[] {
+  const cols = detectColumns(headers);
+  if (cols.exercise < 0) return [];
 
-  for (const name of candidates) {
-    const ws = workbook.Sheets[name];
-    const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true }) as unknown[][];
-    if (data.length > 0) {
-      const headers = (data[0] ?? []).map((c) => String(c ?? "").trim());
-      const score = scoreGenericSheet(headers);
-      if (score > bestScore) {
-        bestScore = score;
-        bestSheet = name;
-      }
-    }
+  const rows: FlatRow[] = [];
+  let lastDate: Date | null = null;
+
+  for (const row of data.slice(1)) {
+    if (!row || (row as any[]).every((c: unknown) => c === null || c === undefined || c === "")) continue;
+
+    const rawDate = cols.date >= 0 ? (row as any[])[cols.date] : null;
+    const parsedDate = rawDate ? parseGenericDate(rawDate) : null;
+    const date = parsedDate || lastDate;
+    if (parsedDate) lastDate = parsedDate;
+    if (!date) continue;
+
+    const movement = cols.exercise >= 0 ? String((row as any[])[cols.exercise] ?? "").trim() : "";
+    if (!movement || movement.length < 2) continue;
+
+    const sets = toNum(cols.sets >= 0 ? (row as any[])[cols.sets] : 1) ?? 1;
+    const reps = toNum(cols.reps >= 0 ? (row as any[])[cols.reps] : null);
+    const loadKg = toNum(cols.weight >= 0 ? (row as any[])[cols.weight] : null) ?? 0;
+    const rpe = cols.rpe >= 0 ? toNum((row as any[])[cols.rpe]) : null;
+
+    if (reps === null || reps <= 0) continue;
+
+    const weekStart = getWeekStart(date);
+    rows.push({
+      date,
+      weekLabel: formatWeekLabel(weekStart),
+      dayLabel: "",
+      movement,
+      sets,
+      reps,
+      loadKg,
+      rpe,
+      volume: null,
+    });
   }
+  return rows;
+}
 
-  const ws = workbook.Sheets[bestSheet];
-  const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true }) as unknown[][];
-  const headers = (data[0] ?? []).map((c) => String(c ?? "").trim());
-  const rows = (data.slice(1) as unknown[][]).filter(
-    (r) => r && r.some((c) => c !== null && c !== undefined && String(c).trim())
-  );
-  return { headers, rows, sheetName: bestSheet };
+function parseGenericDate(raw: unknown): Date | null {
+  if (!raw) return null;
+  if (typeof raw === "number") {
+    const epoch = new Date(1899, 11, 30);
+    epoch.setDate(epoch.getDate() + Math.floor(raw));
+    return isNaN(epoch.getTime()) ? null : epoch;
+  }
+  const s = String(raw).trim();
+  if (!s) return null;
+  const d = new Date(s);
+  if (!isNaN(d.getTime()) && d.getFullYear() > 2000) return d;
+  return null;
 }
 
 /**

@@ -67,29 +67,43 @@ export async function POST(req: Request) {
 
         sheetData = allRows;
       } else {
-        // Generic flat table — find best sheet
-        let bestData = null;
-        let bestScore = -1;
+        // Generic flat table — score all sheets, combine if multiple look like training data
+        const { parseGoogleSheetsValues: parse } = await import("@/lib/parser");
+        const { detectColumns } = await import("@/lib/analytics");
 
+        const scoredSheets: { title: string; parsed: any; score: number }[] = [];
         for (const title of blockSheets) {
           const values = await fetchSheetValues(fileId, title, accessToken);
           if (values.length < 2) continue;
-          const { parseGoogleSheetsValues: parse } = await import("@/lib/parser");
           const parsed = parse(values, title);
-          const score = (parsed.headers.length > 0 ? 1 : 0) + parsed.rows.length;
-          if (score > bestScore) {
-            bestScore = score;
-            bestData = parsed;
-          }
+          if (!parsed.headers.length || !parsed.rows.length) continue;
+          const cols = detectColumns(parsed.headers);
+          // Score: needs exercise + at least one of reps/weight
+          const score = (cols.exercise >= 0 ? 3 : 0) + (cols.reps >= 0 ? 2 : 0) + (cols.weight >= 0 ? 2 : 0) + (cols.date >= 0 ? 1 : 0);
+          if (score >= 3) scoredSheets.push({ title, parsed, score });
         }
 
-        if (!bestData || bestData.rows.length === 0) {
+        if (scoredSheets.length === 0) {
           return NextResponse.json(
             { error: "No training data found. Ensure the spreadsheet has Exercise, Reps, and Weight columns." },
             { status: 400 }
           );
         }
-        sheetData = bestData;
+
+        if (scoredSheets.length > 1) {
+          // Multiple training sheets — combine as FlatRows with blockName tags
+          const { parseGenericGoogleSheetsFlatRows } = await import("@/lib/parser-internal");
+          const allRows: any[] = [];
+          for (const { title, parsed } of scoredSheets) {
+            const flatRows = parseGenericGoogleSheetsFlatRows(parsed.rows, parsed.headers, title);
+            for (const r of flatRows) r.blockName = title;
+            allRows.push(...flatRows);
+          }
+          allRows.sort((a: any, b: any) => a.date.getTime() - b.date.getTime());
+          sheetData = allRows;
+        } else {
+          sheetData = scoredSheets[0].parsed;
+        }
       }
     } else {
       // XLSX/XLS file — download and parse
