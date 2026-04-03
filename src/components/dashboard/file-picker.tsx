@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { signOut } from "next-auth/react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -9,6 +10,7 @@ import {
   Search,
   RefreshCw,
   ChevronRight,
+  LogOut,
 } from "lucide-react";
 
 interface DriveFile {
@@ -34,8 +36,10 @@ export default function FilePicker({ onSelect, isAnalyzing }: FilePickerProps) {
     setError(null);
     try {
       const res = await fetch("/api/drive");
-      if (!res.ok) throw new Error("Failed to load Drive files");
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}: Failed to load Drive files`);
+      }
       setFiles(data);
     } catch (err: any) {
       setError(err.message);
@@ -88,8 +92,22 @@ export default function FilePicker({ onSelect, isAnalyzing }: FilePickerProps) {
         </div>
 
         {error && (
-          <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive mb-4">
-            {error}
+          <div className="rounded-md bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive mb-4">
+            <p className="font-medium mb-1">Drive access error</p>
+            <p className="text-xs opacity-90 mb-3">{error}</p>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={fetchFiles} className="text-xs h-7">
+                <RefreshCw className="h-3 w-3 mr-1" /> Retry
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs h-7 text-destructive border-destructive/40"
+                onClick={() => signOut({ callbackUrl: "/" })}
+              >
+                <LogOut className="h-3 w-3 mr-1" /> Sign out &amp; reconnect
+              </Button>
+            </div>
           </div>
         )}
 
