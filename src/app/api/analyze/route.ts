@@ -225,8 +225,10 @@ async function fetchSheetValues(
   title: string,
   accessToken: string
 ): Promise<unknown[][]> {
+  // Wrap in single quotes so sheet names like "B8" aren't treated as cell refs
+  const safeTitle = "'" + title.replace(/'/g, "''") + "'";
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${fileId}/values/${encodeURIComponent(title)}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${fileId}/values/${encodeURIComponent(safeTitle)}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
   if (res.status === 429) {

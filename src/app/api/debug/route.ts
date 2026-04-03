@@ -19,8 +19,9 @@ function detectCustomTemplate(values: unknown[][]): boolean {
 }
 
 async function fetchSheetValues(fileId: string, title: string, accessToken: string) {
+  const safeTitle = "'" + title.replace(/'/g, "''") + "'";
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${fileId}/values/${encodeURIComponent(title)}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${fileId}/values/${encodeURIComponent(safeTitle)}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
   if (!res.ok) return { ok: false, status: res.status, values: [] };

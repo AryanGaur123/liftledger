@@ -230,9 +230,11 @@ export async function parseAllGoogleSheetBlocks(
 ): Promise<FlatRow[]> {
   if (sheetNames.length === 0) return [];
 
-  // Build batchGet URL — all ranges in one request
+  // Build batchGet URL — all ranges in one request.
+  // Wrap each sheet name in single quotes so the API treats it as a sheet name,
+  // not a cell reference (e.g. "B8" would otherwise be interpreted as cell B8).
   const rangeParams = sheetNames
-    .map((n) => `ranges=${encodeURIComponent(n)}`)
+    .map((n) => `ranges=${encodeURIComponent("'" + n.replace(/'/g, "''") + "'")}`)
     .join("&");
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${fileId}/values:batchGet?${rangeParams}&majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`;
 
