@@ -11,6 +11,7 @@ interface KPICardsProps {
     weekCount: number;
     liftCount: number;
     topWeight: number;
+    weightUnit?: "lbs" | "kg";
   };
 }
 
@@ -32,7 +33,7 @@ export default function KPICards({ data }: KPICardsProps) {
     },
     {
       label: "Total Tonnage",
-      value: `${(data.totalTonnage / 1000).toFixed(1)}t`,
+      value: `${(data.totalTonnage / 1000).toFixed(1)}k ${data.weightUnit ?? "lbs"}`,
       icon: Weight,
       color: "text-orange-500",
       bgColor: "bg-orange-500/10",
@@ -53,7 +54,7 @@ export default function KPICards({ data }: KPICardsProps) {
     },
     {
       label: "Top Weight",
-      value: `${data.topWeight}`,
+      value: `${Math.round(data.topWeight)} ${data.weightUnit ?? "lbs"}`,
       icon: TrendingUp,
       color: "text-red-500",
       bgColor: "bg-red-500/10",

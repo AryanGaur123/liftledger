@@ -91,6 +91,7 @@ interface FlatRow {
   sets: number;
   reps: number;
   loadKg: number;
+  loadUnit: 'lbs' | 'kg';
   rpe: number | null;
   volume: number | null;
   blockName?: string;
@@ -101,6 +102,7 @@ function parseAryanSheet(data: unknown[][], sheetName: string): FlatRow[] {
 
   let currentWeekStart: Date | null = null;
   let currentDay = "Monday";
+  let loadUnit: 'lbs' | 'kg' = 'kg';
 
   for (let i = 0; i < data.length; i++) {
     const row = (data[i] as unknown[]) ?? [];
@@ -122,11 +124,15 @@ function parseAryanSheet(data: unknown[][], sheetName: string): FlatRow[] {
       continue;
     }
 
-    // Column header row — skip
+    // Column header row — detect load unit then skip
     if (
       String(row[3] ?? "").trim().toLowerCase() === "day" &&
       String(row[4] ?? "").trim().toLowerCase() === "movement"
-    ) continue;
+    ) {
+      const loadHeader = String(row[8] ?? "").toLowerCase();
+      loadUnit = loadHeader.includes("lbs") ? "lbs" : "kg";
+      continue;
+    }
 
     // Day label row (MONDAY, WEDNESDAY, etc.) — col 3 has the day name
     const col3 = String(row[3] ?? "").trim();
@@ -168,6 +174,7 @@ function parseAryanSheet(data: unknown[][], sheetName: string): FlatRow[] {
       sets,
       reps,
       loadKg,
+      loadUnit,
       rpe: actualRpe,
       volume,
       // blockName injected by caller
@@ -364,6 +371,7 @@ function parseGenericSheetAsFlatRows(data: unknown[][], headers: string[], sheet
       sets,
       reps,
       loadKg,
+      loadUnit: "lbs" as const,
       rpe,
       volume: null,
     });

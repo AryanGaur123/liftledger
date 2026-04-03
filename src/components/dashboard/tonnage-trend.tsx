@@ -43,11 +43,13 @@ function getLiftColor(canonical: string, idx: number): string {
 interface TonnageTrendProps {
   weeklyMetrics: WeeklyMetric[];
   allWeeks: string[];
+  weightUnit?: "lbs" | "kg";
 }
 
 export default function TonnageTrend({
   weeklyMetrics,
   allWeeks,
+  weightUnit = "lbs",
 }: TonnageTrendProps) {
   // Get unique lifts that are competition or high-volume
   const liftTotals = new Map<string, number>();
@@ -104,7 +106,7 @@ export default function TonnageTrend({
                 tickLine={false}
                 axisLine={false}
                 tickFormatter={(v: number) =>
-                  v >= 1000 ? `${(v / 1000).toFixed(1)}t` : `${v}`
+                  v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`
                 }
               />
               <Tooltip
@@ -115,7 +117,7 @@ export default function TonnageTrend({
                   fontSize: 13,
                 }}
                 formatter={(value: any, name: any) => [
-                  `${Number(value).toLocaleString()} kg`,
+                  `${Math.round(Number(value)).toLocaleString()} ${weightUnit}`,
                   name,
                 ]}
               />

@@ -17,11 +17,13 @@ interface WeeklyMetric {
 interface WeeklySummaryProps {
   weeklyMetrics: WeeklyMetric[];
   allWeeks: string[];
+  weightUnit?: "lbs" | "kg";
 }
 
 export default function WeeklySummary({
   weeklyMetrics,
   allWeeks,
+  weightUnit = "lbs",
 }: WeeklySummaryProps) {
   // Show the most recent week's summary as natural language cards
   const latestWeek = allWeeks[allWeeks.length - 1];
@@ -79,7 +81,7 @@ export default function WeeklySummary({
                   <div>
                     <p className="text-xs text-muted-foreground">Tonnage</p>
                     <p className="text-sm font-semibold tabular-nums">
-                      {m.totalTonnage.toLocaleString()} kg
+                      {Math.round(m.totalTonnage).toLocaleString()} {weightUnit}
                     </p>
                   </div>
                 </div>

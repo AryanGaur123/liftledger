@@ -21,6 +21,7 @@ interface WeeklyMetric {
 interface LiftTableProps {
   weeklyMetrics: WeeklyMetric[];
   allWeeks: string[];
+  weightUnit?: "lbs" | "kg";
 }
 
 type SortKey = "canonical" | "totalSets" | "totalReps" | "totalTonnage" | "topWeight";
@@ -34,7 +35,7 @@ const CATEGORY_BADGE_COLORS: Record<LiftCategory, string> = {
   accessory: "bg-gray-500/15 text-gray-600 dark:text-gray-400 border-gray-500/20",
 };
 
-export default function LiftTable({ weeklyMetrics, allWeeks }: LiftTableProps) {
+export default function LiftTable({ weeklyMetrics, allWeeks, weightUnit = "lbs" }: LiftTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>("totalTonnage");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [selectedWeek, setSelectedWeek] = useState<string>("all");
@@ -165,7 +166,7 @@ export default function LiftTable({ weeklyMetrics, allWeeks }: LiftTableProps) {
                   className="text-right py-2 px-2 font-medium text-muted-foreground cursor-pointer hover:text-foreground"
                   onClick={() => handleSort("topWeight")}
                 >
-                  Top <SortIcon col="topWeight" />
+                  Top ({weightUnit}) <SortIcon col="topWeight" />
                 </th>
               </tr>
             </thead>
@@ -194,10 +195,10 @@ export default function LiftTable({ weeklyMetrics, allWeeks }: LiftTableProps) {
                     {row.totalReps}
                   </td>
                   <td className="py-2.5 px-2 text-right tabular-nums font-medium">
-                    {row.totalTonnage.toLocaleString()} kg
+                    {Math.round(row.totalTonnage).toLocaleString()} {weightUnit}
                   </td>
                   <td className="py-2.5 px-2 text-right tabular-nums">
-                    {row.topWeight} kg
+                    {Math.round(row.topWeight)} {weightUnit}
                   </td>
                 </tr>
               ))}

@@ -10,7 +10,10 @@ export interface FlatRow {
   movement: string;
   sets: number;
   reps: number;
+  /** Raw load value in the unit stored in the sheet */
   loadKg: number;
+  /** The unit of loadKg — 'lbs' or 'kg' */
+  loadUnit: 'lbs' | 'kg';
   rpe: number | null;
   volume: number | null;
   /** Sheet/block name this row came from (e.g. "B1", "B2") */
@@ -59,6 +62,7 @@ function parseSheet(values: unknown[][]): FlatRow[] {
   const rows: FlatRow[] = [];
   let currentWeekStart: Date | null = null;
   let currentDay = "Monday";
+  let loadUnit: 'lbs' | 'kg' = 'kg'; // default, updated from header row
 
   for (let i = 0; i < values.length; i++) {
     const row = (values[i] as unknown[]) ?? [];
@@ -76,11 +80,15 @@ function parseSheet(values: unknown[][]): FlatRow[] {
       continue;
     }
 
-    // Column header row — skip
+    // Column header row — detect load unit and skip
     if (
       String(row[3] ?? "").trim().toLowerCase() === "day" &&
       String(row[4] ?? "").trim().toLowerCase() === "movement"
-    ) continue;
+    ) {
+      const loadHeader = String(row[8] ?? "").toLowerCase();
+      loadUnit = loadHeader.includes("lbs") ? "lbs" : "kg";
+      continue;
+    }
 
     // Day label row
     const col3 = String(row[3] ?? "").trim();
@@ -115,6 +123,7 @@ function parseSheet(values: unknown[][]): FlatRow[] {
       sets,
       reps,
       loadKg,
+      loadUnit,
       rpe: actualRpe,
       volume,
     }); // blockName injected by caller
@@ -190,6 +199,7 @@ export function parseGenericGoogleSheetsFlatRows(
       sets,
       reps,
       loadKg,
+      loadUnit: "lbs" as const, // generic sheets default to lbs; caller can override
       rpe,
       volume: null,
     });

@@ -25,13 +25,13 @@ interface WeeklyMetric {
 
 type MetricKey = "totalSets" | "totalReps" | "totalTonnage";
 
-const METRIC_OPTIONS: { key: MetricKey; label: string; format: (v: number) => string }[] = [
-  { key: "totalSets", label: "Sets", format: (v) => v.toString() },
-  { key: "totalReps", label: "Reps", format: (v) => v.toString() },
+const makeMetricOptions = (unit: string) => [
+  { key: "totalSets" as MetricKey, label: "Sets", format: (v: number) => v.toString() },
+  { key: "totalReps" as MetricKey, label: "Reps", format: (v: number) => v.toString() },
   {
-    key: "totalTonnage",
+    key: "totalTonnage" as MetricKey,
     label: "Tonnage",
-    format: (v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}t` : `${v}kg`),
+    format: (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k ${unit}` : `${Math.round(v)} ${unit}`),
   },
 ];
 
@@ -47,11 +47,13 @@ const CATEGORY_COLORS: Record<LiftCategory, string> = {
 interface VolumeChartProps {
   weeklyMetrics: WeeklyMetric[];
   allWeeks: string[];
+  weightUnit?: "lbs" | "kg";
 }
 
 export default function VolumeChart({
   weeklyMetrics,
   allWeeks,
+  weightUnit = "lbs",
 }: VolumeChartProps) {
   const [metric, setMetric] = useState<MetricKey>("totalTonnage");
 
@@ -71,6 +73,7 @@ export default function VolumeChart({
     return entry;
   });
 
+  const METRIC_OPTIONS = makeMetricOptions(weightUnit);
   const activeMetric = METRIC_OPTIONS.find((m) => m.key === metric)!;
 
   return (

@@ -130,28 +130,42 @@ export async function POST(req: Request) {
 
     if (Array.isArray(sheetData) && sheetData.length > 0 && "movement" in (sheetData[0] as any)) {
       // FlatRow[] from internal parser
+      // Detect the dominant unit across all rows (if any sheet is lbs, surface that)
+      const flatRows = sheetData as any[];
+      const hasLbs = flatRows.some((r) => r.loadUnit === "lbs");
+      const dominantUnit: "lbs" | "kg" = hasLbs ? "lbs" : "kg";
+
       headers = ["date", "exercise", "sets", "reps", "weight", "rpe"];
-      rows = (sheetData as any[]).map((r) => {
-        // Use a plain array but attach blockName as a hidden property
-        // so analytics.ts can read it for sheet-based block detection
+      rows = flatRows.map((r) => {
+        // Normalize all weights to lbs for consistent tonnage/analytics
+        // (convert kg→lbs only if this specific row is in kg)
+        const LBS_PER_KG = 2.20462;
+        const weightInLbs =
+          r.loadUnit === "kg" ? r.loadKg * LBS_PER_KG : r.loadKg;
+
         const arr: any[] = [
           r.date instanceof Date ? r.date.toISOString().slice(0, 10) : r.date,
           r.movement,
           r.sets,
           r.reps,
-          r.loadKg,
+          weightInLbs,
           r.rpe,
         ];
         if (r.blockName) (arr as any).__blockName = r.blockName;
         return arr;
       });
       sheetName = "All Blocks";
+      // Stash dominant unit so it surfaces in the response
+      (rows as any).__weightUnit = dominantUnit;
     } else {
       const sd = sheetData as any;
       headers = sd.headers;
       rows = sd.rows;
       sheetName = sd.sheetName;
     }
+
+    // Extract weight unit stashed on the rows array (lbs or kg)
+    const weightUnit: "lbs" | "kg" = (rows as any).__weightUnit ?? "lbs";
 
     const result = analyzeTrainingData(rows, headers);
 
@@ -176,6 +190,7 @@ export async function POST(req: Request) {
       sheetName,
       headerDetected: headers,
       rowCount: rows.length,
+      weightUnit,
       parsedSets: serializeSets(result.parsedSets),
       blocks: result.blocks.map((b) => ({
         ...b,
