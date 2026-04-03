@@ -117,14 +117,20 @@ export async function POST(req: Request) {
     if (Array.isArray(sheetData) && sheetData.length > 0 && "movement" in sheetData[0]) {
       // FlatRow[] from internal parser
       headers = ["date", "exercise", "sets", "reps", "weight", "rpe"];
-      rows = (sheetData as any[]).map((r) => [
-        r.date instanceof Date ? r.date.toISOString().slice(0, 10) : r.date,
-        r.movement,
-        r.sets,
-        r.reps,
-        r.loadKg,
-        r.rpe,
-      ]);
+      rows = (sheetData as any[]).map((r) => {
+        // Use a plain array but attach blockName as a hidden property
+        // so analytics.ts can read it for sheet-based block detection
+        const arr: any[] = [
+          r.date instanceof Date ? r.date.toISOString().slice(0, 10) : r.date,
+          r.movement,
+          r.sets,
+          r.reps,
+          r.loadKg,
+          r.rpe,
+        ];
+        if (r.blockName) (arr as any).__blockName = r.blockName;
+        return arr;
+      });
       sheetName = "All Blocks";
     } else {
       const sd = sheetData as any;

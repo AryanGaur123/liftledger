@@ -13,6 +13,8 @@ export interface FlatRow {
   loadKg: number;
   rpe: number | null;
   volume: number | null;
+  /** Sheet/block name this row came from (e.g. "B1", "B2") */
+  blockName?: string;
 }
 
 const DAY_OFFSETS: Record<string, number> = {
@@ -115,7 +117,7 @@ function parseSheet(values: unknown[][]): FlatRow[] {
       loadKg,
       rpe: actualRpe,
       volume,
-    });
+    }); // blockName injected by caller
   }
 
   return rows;
@@ -141,6 +143,8 @@ export async function parseAllGoogleSheetBlocks(
       const data = await res.json();
       const values: unknown[][] = data.values ?? [];
       const parsed = parseSheet(values);
+      // Tag each row with the sheet (block) name
+      for (const row of parsed) row.blockName = name;
       allRows.push(...parsed);
     } catch {
       // Skip sheets that fail to load

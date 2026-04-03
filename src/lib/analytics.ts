@@ -32,6 +32,8 @@ export interface ParsedSet {
   tonnage: number;
   totalReps: number;
   rpe: number | null;
+  /** Sheet/block source name when parsed from a multi-sheet workbook */
+  blockName?: string;
 }
 
 export interface WeeklyLiftMetrics {
@@ -228,6 +230,72 @@ function formatWeekLabel(weekStart: Date): string {
 function detectBlocks(parsedSets: ParsedSet[]): BlockInfo[] {
   if (parsedSets.length === 0) return [];
 
+  // If rows have sheet-based blockName, use those directly as block boundaries
+  const hasBlockNames = parsedSets.some((s) => s.blockName);
+  if (hasBlockNames) {
+    return detectBlocksBySheetName(parsedSets);
+  }
+
+  // Fallback: gap-based detection for flat single-sheet data
+  return detectBlocksByTimeGap(parsedSets);
+}
+
+function detectBlocksBySheetName(parsedSets: ParsedSet[]): BlockInfo[] {
+  // Preserve original sheet order using insertion order
+  const sheetOrder: string[] = [];
+  const sheetSets = new Map<string, ParsedSet[]>();
+
+  for (const s of parsedSets) {
+    const name = s.blockName || "Unknown";
+    if (!sheetSets.has(name)) {
+      sheetOrder.push(name);
+      sheetSets.set(name, []);
+    }
+    sheetSets.get(name)!.push(s);
+  }
+
+  // Build a BlockInfo per sheet, numbered in order
+  const blocks: BlockInfo[] = [];
+  for (let i = 0; i < sheetOrder.length; i++) {
+    const name = sheetOrder[i];
+    const sets = sheetSets.get(name)!;
+    sets.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    // Collect unique week labels in order
+    const weekLabels: string[] = [];
+    const seen = new Set<string>();
+    for (const s of sets) {
+      if (!seen.has(s.weekLabel)) {
+        seen.add(s.weekLabel);
+        weekLabels.push(s.weekLabel);
+      }
+    }
+
+    // Derive a clean display name from the sheet name
+    // e.g. "4 WEEKS OUT B12" → "Block 12", "B3" → "Block 3", "B10" → "Block 10"
+    const displayName = sheetNameToBlockLabel(name, i + 1);
+
+    blocks.push({
+      name: displayName,
+      startDate: sets[0].date,
+      endDate: sets[sets.length - 1].date,
+      weekCount: weekLabels.length,
+      weeks: weekLabels,
+    });
+  }
+
+  return blocks;
+}
+
+function sheetNameToBlockLabel(sheetName: string, fallbackNum: number): string {
+  // Match patterns like "B1", "B12", "4 WEEKS OUT B12", "Block 3"
+  const m = sheetName.match(/[Bb](\d{1,2})(?:\s|$)/) || sheetName.match(/block\s*(\d{1,2})/i);
+  if (m) return `Block ${parseInt(m[1])}`;
+  // Otherwise use the sheet name verbatim (trimmed)
+  return sheetName.trim() || `Block ${fallbackNum}`;
+}
+
+function detectBlocksByTimeGap(parsedSets: ParsedSet[]): BlockInfo[] {
   // Group by week
   const weekMap = new Map<string, { start: Date; sets: ParsedSet[] }>();
   for (const s of parsedSets) {
@@ -256,7 +324,6 @@ function detectBlocks(parsedSets: ParsedSet[]): BlockInfo[] {
       (currDate.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24);
 
     if (gapDays > 21) {
-      // Finalize previous block
       blocks.push(buildBlock(blockWeeks, blocks.length + 1));
       blockWeeks = [sortedWeeks[i]];
     } else {
@@ -329,6 +396,9 @@ export function analyzeTrainingData(
     const totalReps = sets * reps;
     const tonnage = w * totalReps;
 
+    // Carry blockName from raw row if present (set by multi-sheet parser)
+    const blockName = (row as any).__blockName as string | undefined;
+
     parsedSets.push({
       date,
       dateStr: date.toISOString().slice(0, 10),
@@ -341,6 +411,7 @@ export function analyzeTrainingData(
       tonnage,
       totalReps,
       rpe,
+      blockName,
     });
   }
 
@@ -387,9 +458,11 @@ export function analyzeTrainingData(
 }
 
 function computeBlockMetrics(allSets: ParsedSet[], block: BlockInfo): BlockMetrics {
-  const blockSets = allSets.filter(
-    (s) => s.date >= block.startDate && s.date <= block.endDate
-  );
+  // Filter by blockName when available (precise), otherwise fall back to date range
+  const hasBlockNames = allSets.some((s) => s.blockName);
+  const blockSets = hasBlockNames
+    ? allSets.filter((s) => sheetNameToBlockLabel(s.blockName || "", 0) === block.name)
+    : allSets.filter((s) => s.date >= block.startDate && s.date <= block.endDate);
 
   const weekLiftMap = new Map<string, WeeklyLiftMetrics>();
   for (const s of blockSets) {
