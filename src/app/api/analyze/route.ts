@@ -135,29 +135,40 @@ export async function POST(req: Request) {
 
     const result = analyzeTrainingData(rows, headers);
 
+    const serializeDate = (d: unknown) => d instanceof Date ? d.toISOString() : d;
+    const serializeSets = (sets: any[]) => sets.map((s) => ({ ...s, date: serializeDate(s.date) }));
+    const serializeMetrics = (metrics: any[]) => metrics.map((m) => ({ ...m, weekStart: serializeDate(m.weekStart) }));
+
+    // Serialize blockMetrics
+    const serializedBlockMetrics: Record<string, any> = {};
+    for (const [blockName, bm] of Object.entries(result.blockMetrics)) {
+      serializedBlockMetrics[blockName] = {
+        weeklyMetrics: serializeMetrics(bm.weeklyMetrics),
+        liftSummary: bm.liftSummary,
+        allLifts: bm.allLifts,
+        allWeeks: bm.allWeeks,
+        parsedSets: serializeSets(bm.parsedSets),
+      };
+    }
+
     return NextResponse.json({
       ...result,
       sheetName,
       headerDetected: headers,
       rowCount: rows.length,
-      parsedSets: result.parsedSets.map((s) => ({
-        ...s,
-        date: s.date instanceof Date ? s.date.toISOString() : s.date,
-      })),
+      parsedSets: serializeSets(result.parsedSets),
       blocks: result.blocks.map((b) => ({
         ...b,
-        startDate: b.startDate instanceof Date ? b.startDate.toISOString() : b.startDate,
-        endDate: b.endDate instanceof Date ? b.endDate.toISOString() : b.endDate,
+        startDate: serializeDate(b.startDate),
+        endDate: serializeDate(b.endDate),
       })),
       latestBlock: {
         ...result.latestBlock,
-        startDate: result.latestBlock.startDate instanceof Date ? result.latestBlock.startDate.toISOString() : result.latestBlock.startDate,
-        endDate: result.latestBlock.endDate instanceof Date ? result.latestBlock.endDate.toISOString() : result.latestBlock.endDate,
+        startDate: serializeDate(result.latestBlock.startDate),
+        endDate: serializeDate(result.latestBlock.endDate),
       },
-      weeklyMetrics: result.weeklyMetrics.map((m) => ({
-        ...m,
-        weekStart: m.weekStart instanceof Date ? m.weekStart.toISOString() : m.weekStart,
-      })),
+      weeklyMetrics: serializeMetrics(result.weeklyMetrics),
+      blockMetrics: serializedBlockMetrics,
     });
   } catch (err: any) {
     console.error("Analysis error:", err);

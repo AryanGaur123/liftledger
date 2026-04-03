@@ -56,10 +56,31 @@ export interface BlockInfo {
   weeks: string[];
 }
 
+export interface BlockMetrics {
+  weeklyMetrics: WeeklyLiftMetrics[];
+  liftSummary: Record<
+    string,
+    {
+      canonical: string;
+      category: LiftCategory;
+      totalSets: number;
+      totalReps: number;
+      totalTonnage: number;
+      topWeight: number;
+    }
+  >;
+  allLifts: string[];
+  allWeeks: string[];
+  parsedSets: ParsedSet[];
+}
+
 export interface AnalysisResult {
   parsedSets: ParsedSet[];
   blocks: BlockInfo[];
   latestBlock: BlockInfo;
+  /** Per-block metrics keyed by block name */
+  blockMetrics: Record<string, BlockMetrics>;
+  /** Kept for backwards compat — defaults to latest block */
   weeklyMetrics: WeeklyLiftMetrics[];
   liftSummary: Record<
     string,
@@ -336,12 +357,40 @@ export function analyzeTrainingData(
     weeks: [],
   };
 
-  // Filter to latest block
-  const blockSets = parsedSets.filter(
-    (s) => s.date >= latestBlock.startDate && s.date <= latestBlock.endDate
+  // Calculate per-block metrics for ALL blocks
+  const blockMetrics: Record<string, BlockMetrics> = {};
+
+  for (const block of blocks) {
+    const bm = computeBlockMetrics(parsedSets, block);
+    blockMetrics[block.name] = bm;
+  }
+
+  // Default to latest block for backwards compat
+  const latestBM = blockMetrics[latestBlock.name] || {
+    weeklyMetrics: [],
+    liftSummary: {},
+    allLifts: [],
+    allWeeks: [],
+    parsedSets: [],
+  };
+
+  return {
+    parsedSets: latestBM.parsedSets,
+    blocks,
+    latestBlock,
+    blockMetrics,
+    weeklyMetrics: latestBM.weeklyMetrics,
+    liftSummary: latestBM.liftSummary,
+    allLifts: latestBM.allLifts,
+    allWeeks: latestBM.allWeeks,
+  };
+}
+
+function computeBlockMetrics(allSets: ParsedSet[], block: BlockInfo): BlockMetrics {
+  const blockSets = allSets.filter(
+    (s) => s.date >= block.startDate && s.date <= block.endDate
   );
 
-  // Calculate weekly metrics per lift
   const weekLiftMap = new Map<string, WeeklyLiftMetrics>();
   for (const s of blockSets) {
     const key = `${s.weekLabel}::${s.liftMapping.canonical}`;
@@ -371,7 +420,6 @@ export function analyzeTrainingData(
     }
   }
 
-  // Calculate avg weight per weekly metric
   for (const m of weekLiftMap.values()) {
     m.avgWeight = m.totalReps > 0 ? m.totalTonnage / m.totalReps : 0;
     if (m.avgRpe !== null) m.avgRpe = Math.round(m.avgRpe * 10) / 10;
@@ -381,8 +429,7 @@ export function analyzeTrainingData(
     (a, b) => a.weekStart.getTime() - b.weekStart.getTime()
   );
 
-  // Build lift summary (block totals)
-  const liftSummary: AnalysisResult["liftSummary"] = {};
+  const liftSummary: BlockMetrics["liftSummary"] = {};
   for (const m of weeklyMetrics) {
     if (!liftSummary[m.canonical]) {
       liftSummary[m.canonical] = {
@@ -405,12 +452,10 @@ export function analyzeTrainingData(
   const allWeeks = Array.from(new Set(weeklyMetrics.map((m) => m.weekLabel)));
 
   return {
-    parsedSets: blockSets,
-    blocks,
-    latestBlock,
     weeklyMetrics,
     liftSummary,
     allLifts,
     allWeeks,
+    parsedSets: blockSets,
   };
 }
