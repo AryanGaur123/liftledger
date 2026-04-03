@@ -80,7 +80,7 @@ export default function DashboardPage() {
   const [fileName, setFileName] = useState<string>("");
   const [selectedBlockName, setSelectedBlockName] = useState<string>("");
   const [blockDropdownOpen, setBlockDropdownOpen] = useState(false);
-  // Weight unit toggle: data is stored in lbs, user can switch to kg for display
+  // Weight unit toggle: purely cosmetic — only changes the label shown, never converts numbers
   const [displayUnit, setDisplayUnit] = useState<"lbs" | "kg">("lbs");
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -152,8 +152,8 @@ export default function DashboardPage() {
       setAnalysis(data);
       // Default to latest block
       setSelectedBlockName(data.latestBlock?.name || "");
-      // Default display unit matches the source data
-      setDisplayUnit(data.weightUnit ?? "lbs");
+      // Default to lbs label
+      setDisplayUnit("lbs");
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -169,52 +169,26 @@ export default function DashboardPage() {
     setDisplayUnit("lbs");
   };
 
-  // Convert a weight value from lbs (storage) to the display unit
-  const toDisplay = (lbs: number) =>
-    displayUnit === "kg" ? Math.round(lbs / 2.20462 * 10) / 10 : Math.round(lbs * 10) / 10;
-
-  // Scale all weight-based metrics in activeMetrics for the chosen display unit
-  const scaledMetrics = useMemo(() => {
-    if (!activeMetrics) return null;
-    if (displayUnit === "lbs") return activeMetrics; // already in lbs
-    const factor = 1 / 2.20462;
-    return {
-      ...activeMetrics,
-      weeklyMetrics: activeMetrics.weeklyMetrics.map((m: any) => ({
-        ...m,
-        totalTonnage: m.totalTonnage * factor,
-        avgWeight: m.avgWeight * factor,
-        topWeight: m.topWeight * factor,
-      })),
-      liftSummary: Object.fromEntries(
-        Object.entries(activeMetrics.liftSummary).map(([k, v]: [string, any]) => [
-          k,
-          { ...v, totalTonnage: v.totalTonnage * factor, topWeight: v.topWeight * factor },
-        ])
-      ),
-    };
-  }, [activeMetrics, displayUnit]);
-
-  // Calculate block-level KPIs from scaled metrics
-  const kpiData = scaledMetrics && activeBlock
+  // Calculate block-level KPIs — numbers are never converted, only the unit label changes
+  const kpiData = activeMetrics && activeBlock
     ? {
-        totalSets: Object.values(scaledMetrics.liftSummary).reduce(
+        totalSets: Object.values(activeMetrics.liftSummary).reduce(
           (sum: number, l: any) => sum + l.totalSets,
           0
         ),
-        totalReps: Object.values(scaledMetrics.liftSummary).reduce(
+        totalReps: Object.values(activeMetrics.liftSummary).reduce(
           (sum: number, l: any) => sum + l.totalReps,
           0
         ),
-        totalTonnage: Object.values(scaledMetrics.liftSummary).reduce(
+        totalTonnage: Object.values(activeMetrics.liftSummary).reduce(
           (sum: number, l: any) => sum + l.totalTonnage,
           0
         ),
         weekCount: activeBlock.weekCount,
-        liftCount: scaledMetrics.allLifts.length,
-        topWeight: Object.values(scaledMetrics.liftSummary).length > 0
+        liftCount: activeMetrics.allLifts.length,
+        topWeight: Object.values(activeMetrics.liftSummary).length > 0
           ? Math.max(
-              ...Object.values(scaledMetrics.liftSummary).map((l: any) => l.topWeight)
+              ...Object.values(activeMetrics.liftSummary).map((l: any) => l.topWeight)
             )
           : 0,
         weightUnit: displayUnit,
@@ -323,7 +297,7 @@ export default function DashboardPage() {
         )}
 
         {/* Dashboard state */}
-        {analysis && kpiData && activeBlock && activeMetrics && scaledMetrics && (
+        {analysis && kpiData && activeBlock && activeMetrics && (
           <div className="space-y-4">
             {/* Block info header with selector */}
             <div className="flex items-center justify-between flex-wrap gap-2">
@@ -417,29 +391,29 @@ export default function DashboardPage() {
 
             {/* Latest week summary */}
             <WeeklySummary
-              weeklyMetrics={scaledMetrics.weeklyMetrics}
-              allWeeks={scaledMetrics.allWeeks}
+              weeklyMetrics={activeMetrics.weeklyMetrics}
+              allWeeks={activeMetrics.allWeeks}
               weightUnit={displayUnit}
             />
 
             {/* Charts row */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <VolumeChart
-                weeklyMetrics={scaledMetrics.weeklyMetrics}
-                allWeeks={scaledMetrics.allWeeks}
+                weeklyMetrics={activeMetrics.weeklyMetrics}
+                allWeeks={activeMetrics.allWeeks}
                 weightUnit={displayUnit}
               />
               <TonnageTrend
-                weeklyMetrics={scaledMetrics.weeklyMetrics}
-                allWeeks={scaledMetrics.allWeeks}
+                weeklyMetrics={activeMetrics.weeklyMetrics}
+                allWeeks={activeMetrics.allWeeks}
                 weightUnit={displayUnit}
               />
             </div>
 
             {/* Lift breakdown table */}
             <LiftTable
-              weeklyMetrics={scaledMetrics.weeklyMetrics}
-              allWeeks={scaledMetrics.allWeeks}
+              weeklyMetrics={activeMetrics.weeklyMetrics}
+              allWeeks={activeMetrics.allWeeks}
               weightUnit={displayUnit}
             />
 

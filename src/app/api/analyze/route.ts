@@ -137,18 +137,13 @@ export async function POST(req: Request) {
 
       headers = ["date", "exercise", "sets", "reps", "weight", "rpe"];
       rows = flatRows.map((r) => {
-        // Normalize all weights to lbs for consistent tonnage/analytics
-        // (convert kg→lbs only if this specific row is in kg)
-        const LBS_PER_KG = 2.20462;
-        const weightInLbs =
-          r.loadUnit === "kg" ? r.loadKg * LBS_PER_KG : r.loadKg;
-
+        // Pass weights through as-is — no conversion. The unit toggle is purely cosmetic.
         const arr: any[] = [
           r.date instanceof Date ? r.date.toISOString().slice(0, 10) : r.date,
           r.movement,
           r.sets,
           r.reps,
-          weightInLbs,
+          r.loadKg, // raw value, unit is whatever the sheet uses
           r.rpe,
         ];
         if (r.blockName) (arr as any).__blockName = r.blockName;
