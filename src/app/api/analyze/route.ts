@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { parseGoogleSheetsValues, parseXlsxBuffer } from "@/lib/parser";
 import { analyzeTrainingData } from "@/lib/analytics";
 
+const SKIP_SHEETS = /^(notes|rpe chart|attempts)/i;
+
 export async function POST(req: Request) {
   const session = await auth();
   if (!session || !(session as any).accessToken) {
@@ -19,68 +21,78 @@ export async function POST(req: Request) {
   try {
     let sheetData;
 
-    if (
-      mimeType === "application/vnd.google-apps.spreadsheet"
-    ) {
-      // Native Google Sheet: use Sheets API
-      // First get all sheet names
+    if (mimeType === "application/vnd.google-apps.spreadsheet") {
+      // Native Google Sheet — fetch metadata for all sheets
       const metaRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${fileId}?fields=sheets.properties`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
 
       if (!metaRes.ok) {
-        const text = await metaRes.text();
-        console.error("Sheets meta error:", text);
+        const body = await metaRes.json().catch(() => ({}));
+        const msg = body?.error?.message || `HTTP ${metaRes.status}`;
         return NextResponse.json(
-          { error: "Failed to read spreadsheet metadata" },
+          { error: `Failed to read spreadsheet metadata: ${msg}` },
           { status: metaRes.status }
         );
       }
 
       const meta = await metaRes.json();
-      const sheets = meta.sheets || [];
+      const allSheets = (meta.sheets ?? []).map((s: any) => s.properties?.title).filter(Boolean);
+      const blockSheets = allSheets.filter((n: string) => !SKIP_SHEETS.test(n));
 
-      // Try each sheet, pick the one with best data
-      let bestData = null;
-      let bestScore = -1;
+      if (blockSheets.length === 0) {
+        return NextResponse.json({ error: "No training data sheets found" }, { status: 400 });
+      }
 
-      for (const sheet of sheets) {
-        const title = sheet.properties?.title;
-        if (!title) continue;
+      // Fetch first sheet to detect format
+      const firstValues = await fetchSheetValues(fileId, blockSheets[0], accessToken);
+      const isCustomTemplate = detectCustomTemplate(firstValues);
 
-        const valuesRes = await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${fileId}/values/${encodeURIComponent(title)}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,
-          { headers: { Authorization: `Bearer ${accessToken}` } }
-        );
+      if (isCustomTemplate) {
+        // Custom Aryan-template: fetch ALL block sheets and combine
+        const { parseGoogleSheetsValues: parse } = await import("@/lib/parser");
+        const { analyzeTrainingData: analyze } = await import("@/lib/analytics");
 
-        if (!valuesRes.ok) continue;
+        // Import the internal parser directly
+        const { parseAllGoogleSheetBlocks } = await import("@/lib/parser-internal");
+        const allRows = await parseAllGoogleSheetBlocks(fileId, blockSheets, accessToken);
 
-        const valuesData = await valuesRes.json();
-        const values = valuesData.values || [];
-
-        if (values.length < 2) continue;
-
-        const parsed = parseGoogleSheetsValues(values, title);
-        const score =
-          (parsed.headers.length > 0 ? 1 : 0) + parsed.rows.length;
-
-        if (score > bestScore) {
-          bestScore = score;
-          bestData = parsed;
+        if (allRows.length === 0) {
+          return NextResponse.json(
+            { error: "No training sets found. Check that your spreadsheet has exercises with sets, reps, and load filled in." },
+            { status: 400 }
+          );
         }
-      }
 
-      if (!bestData || bestData.rows.length === 0) {
-        return NextResponse.json(
-          { error: "No training data found in this spreadsheet. Make sure it has columns for Exercise, Reps, and Weight." },
-          { status: 400 }
-        );
-      }
+        sheetData = allRows;
+      } else {
+        // Generic flat table — find best sheet
+        let bestData = null;
+        let bestScore = -1;
 
-      sheetData = bestData;
+        for (const title of blockSheets) {
+          const values = await fetchSheetValues(fileId, title, accessToken);
+          if (values.length < 2) continue;
+          const { parseGoogleSheetsValues: parse } = await import("@/lib/parser");
+          const parsed = parse(values, title);
+          const score = (parsed.headers.length > 0 ? 1 : 0) + parsed.rows.length;
+          if (score > bestScore) {
+            bestScore = score;
+            bestData = parsed;
+          }
+        }
+
+        if (!bestData || bestData.rows.length === 0) {
+          return NextResponse.json(
+            { error: "No training data found. Ensure the spreadsheet has Exercise, Reps, and Weight columns." },
+            { status: 400 }
+          );
+        }
+        sheetData = bestData;
+      }
     } else {
-      // XLSX/XLS file: download and parse
+      // XLSX/XLS file — download and parse
       const downloadRes = await fetch(
         `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -88,7 +100,7 @@ export async function POST(req: Request) {
 
       if (!downloadRes.ok) {
         return NextResponse.json(
-          { error: "Failed to download file" },
+          { error: `Failed to download file (${downloadRes.status})` },
           { status: downloadRes.status }
         );
       }
@@ -97,32 +109,54 @@ export async function POST(req: Request) {
       sheetData = parseXlsxBuffer(buffer);
     }
 
-    // Run analytics
-    const result = analyzeTrainingData(sheetData.rows, sheetData.headers);
+    // sheetData is either SheetData or FlatRow[] from internal parser
+    let headers: string[];
+    let rows: unknown[][];
+    let sheetName: string;
+
+    if (Array.isArray(sheetData) && sheetData.length > 0 && "movement" in sheetData[0]) {
+      // FlatRow[] from internal parser
+      headers = ["date", "exercise", "sets", "reps", "weight", "rpe"];
+      rows = (sheetData as any[]).map((r) => [
+        r.date instanceof Date ? r.date.toISOString().slice(0, 10) : r.date,
+        r.movement,
+        r.sets,
+        r.reps,
+        r.loadKg,
+        r.rpe,
+      ]);
+      sheetName = "All Blocks";
+    } else {
+      const sd = sheetData as any;
+      headers = sd.headers;
+      rows = sd.rows;
+      sheetName = sd.sheetName;
+    }
+
+    const result = analyzeTrainingData(rows, headers);
 
     return NextResponse.json({
       ...result,
-      sheetName: sheetData.sheetName,
-      headerDetected: sheetData.headers,
-      rowCount: sheetData.rows.length,
-      // Serialize dates
+      sheetName,
+      headerDetected: headers,
+      rowCount: rows.length,
       parsedSets: result.parsedSets.map((s) => ({
         ...s,
-        date: s.date.toISOString(),
+        date: s.date instanceof Date ? s.date.toISOString() : s.date,
       })),
       blocks: result.blocks.map((b) => ({
         ...b,
-        startDate: b.startDate.toISOString(),
-        endDate: b.endDate.toISOString(),
+        startDate: b.startDate instanceof Date ? b.startDate.toISOString() : b.startDate,
+        endDate: b.endDate instanceof Date ? b.endDate.toISOString() : b.endDate,
       })),
       latestBlock: {
         ...result.latestBlock,
-        startDate: result.latestBlock.startDate.toISOString(),
-        endDate: result.latestBlock.endDate.toISOString(),
+        startDate: result.latestBlock.startDate instanceof Date ? result.latestBlock.startDate.toISOString() : result.latestBlock.startDate,
+        endDate: result.latestBlock.endDate instanceof Date ? result.latestBlock.endDate.toISOString() : result.latestBlock.endDate,
       },
       weeklyMetrics: result.weeklyMetrics.map((m) => ({
         ...m,
-        weekStart: m.weekStart.toISOString(),
+        weekStart: m.weekStart instanceof Date ? m.weekStart.toISOString() : m.weekStart,
       })),
     });
   } catch (err: any) {
@@ -132,4 +166,31 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
+}
+
+async function fetchSheetValues(
+  fileId: string,
+  title: string,
+  accessToken: string
+): Promise<unknown[][]> {
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${fileId}/values/${encodeURIComponent(title)}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.values ?? [];
+}
+
+function detectCustomTemplate(values: unknown[][]): boolean {
+  for (let i = 0; i < Math.min(20, values.length); i++) {
+    const row = values[i] as unknown[];
+    if (!row) continue;
+    if (row.some((c) => String(c ?? "").trim().toLowerCase() === "weeks out")) return true;
+    if (
+      String(row[3] ?? "").trim().toLowerCase() === "day" &&
+      String(row[4] ?? "").trim().toLowerCase() === "movement"
+    ) return true;
+  }
+  return false;
 }
