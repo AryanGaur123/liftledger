@@ -93,6 +93,7 @@ interface FlatRow {
   loadKg: number;
   rpe: number | null;
   volume: number | null;
+  blockName?: string;
 }
 
 function parseAryanSheet(data: unknown[][], sheetName: string): FlatRow[] {
@@ -169,6 +170,7 @@ function parseAryanSheet(data: unknown[][], sheetName: string): FlatRow[] {
       loadKg,
       rpe: actualRpe,
       volume,
+      // blockName injected by caller
     });
   }
 
@@ -235,7 +237,7 @@ export function parseXlsxBuffer(buffer: Buffer): SheetData {
   }) as unknown[][];
 
   if (isAryanTemplate(firstData)) {
-    // Parse ALL block sheets and combine into one flat dataset
+    // Parse ALL block sheets and combine — tag each row with its sheet name
     const allRows: FlatRow[] = [];
 
     for (const name of candidates) {
@@ -245,6 +247,7 @@ export function parseXlsxBuffer(buffer: Buffer): SheetData {
         header: 1, raw: true, defval: null,
       }) as unknown[][];
       const parsed = parseAryanSheet(data, name);
+      for (const r of parsed) r.blockName = name;
       allRows.push(...parsed);
     }
 
@@ -254,7 +257,8 @@ export function parseXlsxBuffer(buffer: Buffer): SheetData {
 
     // Sort by date ascending
     allRows.sort((a, b) => a.date.getTime() - b.date.getTime());
-    return flatRowsToSheetData(allRows, "All Blocks");
+    // Return as FlatRow[] so the API route can preserve blockName
+    return allRows as unknown as SheetData;
   }
 
   // Generic flat table — find best sheet

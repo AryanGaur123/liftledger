@@ -114,7 +114,7 @@ export async function POST(req: Request) {
     let rows: unknown[][];
     let sheetName: string;
 
-    if (Array.isArray(sheetData) && sheetData.length > 0 && "movement" in sheetData[0]) {
+    if (Array.isArray(sheetData) && sheetData.length > 0 && "movement" in (sheetData[0] as any)) {
       // FlatRow[] from internal parser
       headers = ["date", "exercise", "sets", "reps", "weight", "rpe"];
       rows = (sheetData as any[]).map((r) => {
