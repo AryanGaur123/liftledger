@@ -202,6 +202,13 @@ export async function POST(req: Request) {
     });
   } catch (err: any) {
     console.error("Analysis error:", err);
+    // Surface rate limit errors clearly
+    if (err.name === "RateLimitError" || err.message?.includes("rate limit") || err.message?.includes("429")) {
+      return NextResponse.json(
+        { error: `Google API rate limit reached. Please wait a moment and try again.` },
+        { status: 429 }
+      );
+    }
     return NextResponse.json(
       { error: err.message || "Failed to analyze spreadsheet" },
       { status: 500 }
@@ -218,6 +225,10 @@ async function fetchSheetValues(
     `https://sheets.googleapis.com/v4/spreadsheets/${fileId}/values/${encodeURIComponent(title)}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
+  if (res.status === 429) {
+    const { RateLimitError } = await import("@/lib/parser-internal");
+    throw new RateLimitError();
+  }
   if (!res.ok) return [];
   const data = await res.json();
   return data.values ?? [];

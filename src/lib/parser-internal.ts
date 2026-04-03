@@ -220,35 +220,59 @@ function parseRawDate(raw: unknown): Date | null {
 }
 
 /**
- * Fetches all block sheets from Google Sheets API and parses them into FlatRows.
+ * Fetches all block sheets from Google Sheets API in a SINGLE batchGet call
+ * and parses them into FlatRows. Reduces API quota usage from N calls to 1.
  */
 export async function parseAllGoogleSheetBlocks(
   fileId: string,
   sheetNames: string[],
   accessToken: string
 ): Promise<FlatRow[]> {
-  const allRows: FlatRow[] = [];
+  if (sheetNames.length === 0) return [];
 
-  for (const name of sheetNames) {
-    try {
-      const res = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${fileId}/values/${encodeURIComponent(name)}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
+  // Build batchGet URL — all ranges in one request
+  const rangeParams = sheetNames
+    .map((n) => `ranges=${encodeURIComponent(n)}`)
+    .join("&");
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${fileId}/values:batchGet?${rangeParams}&majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    if (res.status === 429) {
+      const retryAfter = res.headers.get("Retry-After");
+      throw new RateLimitError(
+        retryAfter ? parseInt(retryAfter, 10) : 60
       );
-      if (!res.ok) continue;
-      const data = await res.json();
-      const values: unknown[][] = data.values ?? [];
-      const parsed = parseSheet(values);
-      // Tag each row with the sheet (block) name
-      for (const row of parsed) row.blockName = name;
-      allRows.push(...parsed);
-    } catch {
-      // Skip sheets that fail to load
-      continue;
     }
+    throw new Error(`Sheets batchGet failed: HTTP ${res.status}`);
   }
 
-  // Sort chronologically
+  const data = await res.json();
+  const valueRanges: { range: string; values?: unknown[][] }[] =
+    data.valueRanges ?? [];
+
+  const allRows: FlatRow[] = [];
+
+  for (let i = 0; i < sheetNames.length; i++) {
+    const values = valueRanges[i]?.values ?? [];
+    const parsed = parseSheet(values);
+    for (const row of parsed) row.blockName = sheetNames[i];
+    allRows.push(...parsed);
+  }
+
   allRows.sort((a, b) => a.date.getTime() - b.date.getTime());
   return allRows;
+}
+
+/** Thrown when Google returns 429 so the API route can surface a clear message */
+export class RateLimitError extends Error {
+  retryAfter: number;
+  constructor(retryAfter = 60) {
+    super(`Google Sheets rate limit hit. Please try again in ${retryAfter} seconds.`);
+    this.name = "RateLimitError";
+    this.retryAfter = retryAfter;
+  }
 }
