@@ -147,7 +147,7 @@ Unrecognized exercises are categorized as "Accessory" with their name title-case
    - `GOOGLE_CLIENT_ID`
    - `GOOGLE_CLIENT_SECRET`
    - `AUTH_SECRET`
-   - `AUTH_URL` = your Vercel URL (e.g., `https://liftledger.vercel.app`)
+   - `AUTH_URL` = your Vercel URL (e.g., `https://liftledger-lilac.vercel.app`)
    - `AUTH_TRUST_HOST` = `true`
 4. Deploy
 
