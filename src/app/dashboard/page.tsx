@@ -380,17 +380,7 @@ export default function DashboardPage() {
               allWeeks={activeMetrics.allWeeks}
             />
 
-            {/* Footer */}
-            <footer className="pt-6 pb-10 text-center">
-              <a
-                href="https://www.perplexity.ai/computer"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                Created with Perplexity Computer
-              </a>
-            </footer>
+
           </div>
         )}
       </main>
