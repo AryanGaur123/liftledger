@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 import { parseGoogleSheetsValues, parseXlsxBuffer } from "@/lib/parser";
 import { analyzeTrainingData } from "@/lib/analytics";
 
-const SKIP_SHEETS = /^(notes|rpe chart|attempts)/i;
+// Skip sheets that are clearly not training blocks
+const SKIP_SHEETS = /^(notes|rpe chart)/i;
+const SKIP_SHEETS_CONTAINS = /attempts/i;
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -39,7 +41,9 @@ export async function POST(req: Request) {
 
       const meta = await metaRes.json();
       const allSheets = (meta.sheets ?? []).map((s: any) => s.properties?.title).filter(Boolean);
-      const blockSheets = allSheets.filter((n: string) => !SKIP_SHEETS.test(n));
+      const blockSheets = allSheets.filter(
+        (n: string) => !SKIP_SHEETS.test(n) && !SKIP_SHEETS_CONTAINS.test(n)
+      );
 
       if (blockSheets.length === 0) {
         return NextResponse.json({ error: "No training data sheets found" }, { status: 400 });

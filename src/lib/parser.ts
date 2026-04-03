@@ -229,9 +229,12 @@ function scoreGenericSheet(headers: string[]): number {
 export function parseXlsxBuffer(buffer: Buffer): SheetData {
   const workbook = XLSX.read(buffer, { type: "buffer", cellDates: false, raw: true });
 
-  // Skip utility sheets
-  const skip = /^(notes|rpe chart|attempts)/i;
-  const candidates = workbook.SheetNames.filter((n) => !skip.test(n));
+  // Skip utility sheets (notes, rpe chart, anything with "attempts" anywhere in the name)
+  const skipExact = /^(notes|rpe chart)/i;
+  const skipContains = /attempts/i;
+  const candidates = workbook.SheetNames.filter(
+    (n) => !skipExact.test(n) && !skipContains.test(n)
+  );
 
   if (candidates.length === 0) {
     return { headers: [], rows: [], sheetName: workbook.SheetNames[0] ?? "Sheet1" };
