@@ -68,7 +68,6 @@ interface AnalysisData {
   allWeeks: string[];
   sheetName: string;
   rowCount: number;
-  /** Unit weights are stored in after normalization (always lbs from our parser) */
   weightUnit: "lbs" | "kg";
 }
 
@@ -81,19 +80,17 @@ export default function DashboardPage() {
   const [fileName, setFileName] = useState<string>("");
   const [selectedBlockName, setSelectedBlockName] = useState<string>("");
   const [blockDropdownOpen, setBlockDropdownOpen] = useState(false);
-  // Weight unit toggle: purely cosmetic — only changes the label shown, never converts numbers
   const [displayUnit, setDisplayUnit] = useState<"lbs" | "kg">("lbs");
   const dropdownRef = useRef<HTMLDivElement>(null);
-  // Mode: null = show mode picker after file selection, "analytics" = show dashboard
+
+  // Mode: null = file picker, "picker" = mode picker, "analytics" = dashboard
   const [mode, setMode] = useState<"picker" | "analytics" | null>(null);
-  // Store selected file info for workout route
   const [selectedFile, setSelectedFile] = useState<{
     id: string;
     name: string;
     mimeType: string;
   } | null>(null);
 
-  // Close dropdown on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -106,7 +103,6 @@ export default function DashboardPage() {
     }
   }, [blockDropdownOpen]);
 
-  // Derive active block and metrics from selection
   const activeBlock: BlockData | null = useMemo(() => {
     if (!analysis) return null;
     return analysis.blocks.find((b) => b.name === selectedBlockName) || analysis.latestBlock;
@@ -136,21 +132,24 @@ export default function DashboardPage() {
     return null;
   }
 
-  const handleFileSelect = async (file: {
-    id: string;
-    name: string;
-    mimeType: string;
-  }) => {
-    setAnalyzing(true);
-    setError(null);
+  // Step 1: User picks a file → show mode picker immediately (no analysis)
+  const handleFileSelect = (file: { id: string; name: string; mimeType: string }) => {
     setFileName(file.name);
     setSelectedFile(file);
+    setMode("picker");
+  };
+
+  // Step 2a: User picks Analytics → run analysis
+  const handleAnalytics = async () => {
+    if (!selectedFile) return;
+    setAnalyzing(true);
+    setError(null);
 
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileId: file.id, mimeType: file.mimeType }),
+        body: JSON.stringify({ fileId: selectedFile.id, mimeType: selectedFile.mimeType }),
       });
 
       if (!res.ok) {
@@ -160,12 +159,9 @@ export default function DashboardPage() {
 
       const data = await res.json();
       setAnalysis(data);
-      // Default to latest block
       setSelectedBlockName(data.latestBlock?.name || "");
-      // Default to lbs label
       setDisplayUnit("lbs");
-      // Show mode picker instead of immediately showing analytics
-      setMode("picker");
+      setMode("analytics");
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -173,9 +169,16 @@ export default function DashboardPage() {
     }
   };
 
+  // Step 2b: User picks Log Workout → navigate to /workout
+  const handleWorkout = () => {
+    if (!selectedFile) return;
+    router.push(
+      `/workout?fileId=${encodeURIComponent(selectedFile.id)}&fileName=${encodeURIComponent(selectedFile.name)}`
+    );
+  };
+
   const handleBack = () => {
     if (mode === "analytics") {
-      // Go back to mode picker
       setMode("picker");
       return;
     }
@@ -188,20 +191,16 @@ export default function DashboardPage() {
     setSelectedFile(null);
   };
 
-  // Calculate block-level KPIs — numbers are never converted, only the unit label changes
   const kpiData = activeMetrics && activeBlock
     ? {
         totalSets: Object.values(activeMetrics.liftSummary).reduce(
-          (sum: number, l: any) => sum + l.totalSets,
-          0
+          (sum: number, l: any) => sum + l.totalSets, 0
         ),
         totalReps: Object.values(activeMetrics.liftSummary).reduce(
-          (sum: number, l: any) => sum + l.totalReps,
-          0
+          (sum: number, l: any) => sum + l.totalReps, 0
         ),
         totalTonnage: Object.values(activeMetrics.liftSummary).reduce(
-          (sum: number, l: any) => sum + l.totalTonnage,
-          0
+          (sum: number, l: any) => sum + l.totalTonnage, 0
         ),
         weekCount: activeBlock.weekCount,
         liftCount: activeMetrics.allLifts.length,
@@ -220,7 +219,7 @@ export default function DashboardPage() {
       <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto flex items-center justify-between h-14 px-4">
           <div className="flex items-center gap-3">
-            {analysis && (
+            {(mode != null) && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -280,11 +279,11 @@ export default function DashboardPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={handleBack}
+              onClick={() => { setError(null); setMode("picker"); }}
               className="mt-3"
               data-testid="button-try-again"
             >
-              Try another file
+              Try again
             </Button>
           </div>
         )}
@@ -303,20 +302,20 @@ export default function DashboardPage() {
         )}
 
         {/* File picker state */}
-        {!analysis && !analyzing && !error && (
+        {mode === null && !analyzing && !error && (
           <div className="py-10">
             <div className="text-center mb-8">
               <h1 className="text-xl font-bold">Powerlifting Analytics</h1>
               <p className="text-sm text-muted-foreground mt-1">
-                Select a training spreadsheet to analyze your latest block
+                Select a training spreadsheet to get started
               </p>
             </div>
-            <FilePicker onSelect={handleFileSelect} isAnalyzing={analyzing} />
+            <FilePicker onSelect={handleFileSelect} isAnalyzing={false} />
           </div>
         )}
 
-        {/* Mode picker state — appears after file selection & analysis */}
-        {analysis && mode === "picker" && !analyzing && !error && (
+        {/* Mode picker state — appears immediately after file selection */}
+        {mode === "picker" && !analyzing && !error && (
           <div className="flex flex-col items-center justify-center py-16 px-4">
             <div className="text-center mb-8">
               <h1 className="text-xl font-bold">{fileName}</h1>
@@ -325,9 +324,8 @@ export default function DashboardPage() {
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-lg">
-              {/* Analytics card */}
               <button
-                onClick={() => setMode("analytics")}
+                onClick={handleAnalytics}
                 className="group flex flex-col items-center gap-4 p-8 rounded-xl border bg-card hover:border-primary/50 hover:bg-accent/50 transition-all active:scale-[0.98]"
               >
                 <div className="h-14 w-14 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
@@ -340,15 +338,8 @@ export default function DashboardPage() {
                   </div>
                 </div>
               </button>
-              {/* Log Workout card */}
               <button
-                onClick={() => {
-                  if (!selectedFile || !analysis) return;
-                  const latestBlock = analysis.latestBlock?.name || analysis.blocks?.[0]?.name || "";
-                  router.push(
-                    `/workout?fileId=${encodeURIComponent(selectedFile.id)}&sheetName=${encodeURIComponent(latestBlock)}`
-                  );
-                }}
+                onClick={handleWorkout}
                 className="group flex flex-col items-center gap-4 p-8 rounded-xl border bg-card hover:border-primary/50 hover:bg-accent/50 transition-all active:scale-[0.98]"
               >
                 <div className="h-14 w-14 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
@@ -368,11 +359,9 @@ export default function DashboardPage() {
         {/* Dashboard state */}
         {analysis && mode === "analytics" && kpiData && activeBlock && activeMetrics && (
           <div className="space-y-4">
-            {/* Block info header with selector */}
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
                 <div className="flex items-center gap-2">
-                  {/* Block selector dropdown */}
                   <div className="relative" ref={dropdownRef}>
                     <button
                       onClick={() => setBlockDropdownOpen(!blockDropdownOpen)}
@@ -413,22 +402,17 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {new Date(
-                    activeBlock.startDate
-                  ).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
+                  {new Date(activeBlock.startDate).toLocaleDateString("en-US", {
+                    month: "short", day: "numeric",
                   })}{" "}
                   —{" "}
-                  {new Date(activeBlock.endDate).toLocaleDateString(
-                    "en-US",
-                    { month: "short", day: "numeric", year: "numeric" }
-                  )}{" "}
+                  {new Date(activeBlock.endDate).toLocaleDateString("en-US", {
+                    month: "short", day: "numeric", year: "numeric",
+                  })}{" "}
                   · {activeBlock.weekCount} weeks ·{" "}
                   {activeMetrics.parsedSets.length} rows parsed
                 </p>
               </div>
-              {/* lbs / kg toggle */}
               <div className="flex items-center gap-1 rounded-md border p-0.5 text-sm">
                 <button
                   onClick={() => setDisplayUnit("lbs")}
@@ -455,17 +439,14 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* KPI Cards */}
             <KPICards data={kpiData} />
 
-            {/* Latest week summary */}
             <WeeklySummary
               weeklyMetrics={activeMetrics.weeklyMetrics}
               allWeeks={activeMetrics.allWeeks}
               weightUnit={displayUnit}
             />
 
-            {/* Charts row */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <VolumeChart
                 weeklyMetrics={activeMetrics.weeklyMetrics}
@@ -479,14 +460,11 @@ export default function DashboardPage() {
               />
             </div>
 
-            {/* Lift breakdown table */}
             <LiftTable
               weeklyMetrics={activeMetrics.weeklyMetrics}
               allWeeks={activeMetrics.allWeeks}
               weightUnit={displayUnit}
             />
-
-
           </div>
         )}
       </main>

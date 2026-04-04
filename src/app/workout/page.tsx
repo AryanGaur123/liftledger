@@ -1,477 +1,355 @@
 "use client";
 
-import { Suspense, useState, useEffect, useCallback, useMemo } from "react";
-import { useSession } from "next-auth/react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import DaySelector from "@/components/workout/day-selector";
+import { Loader2 } from "lucide-react";
 import CheckInCard from "@/components/workout/checkin-card";
-import ExerciseCard from "@/components/workout/exercise-card";
-import {
-  ArrowLeft,
-  Loader2,
-  Dumbbell,
-  CheckCircle2,
-  Trophy,
-} from "lucide-react";
+import ExerciseCard, { type ExerciseData } from "@/components/workout/exercise-card";
 
-export default function WorkoutPageWrapper() {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-background flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      }
-    >
-      <WorkoutPageInner />
-    </Suspense>
-  );
-}
+type Step = "loading" | "pick-block" | "day-select" | "checkin" | "exercise" | "complete";
 
-type Step = "day-select" | "checkin" | "exercise" | "complete";
+interface WeekDay { dayLabel: string; exerciseCount: number; weekIndex: number; }
+interface WeekInfo { weekIndex: number; days: WeekDay[]; }
+interface FeedbackSlot { rowIndex: number; category: string; value: number | null; }
+interface ExerciseResult { exercise: ExerciseData; rpe: number | null; weight: number; weightChanged: boolean; }
 
-interface ExerciseData {
-  rowIndex: number;
-  movement: string;
-  tempo: string;
-  sets: number;
-  reps: number;
-  load: number;
-  loadUnit: "lbs" | "kg";
-  prescribedRPE: string;
-  actualRPE: number | null;
-  isBarbell: boolean;
-}
-
-interface FeedbackSlots {
-  [key: string]: { row: number; value: number | null };
-}
-
-interface DayInfo {
-  dayLabel: string;
-  exerciseCount: number;
-  hasBeenLogged: boolean;
-}
-
-interface LoggedExercise {
-  movement: string;
-  load: number;
-  loadUnit: string;
-  rpe: number | null;
-  sets: number;
-  reps: number;
-}
-
-interface CheckInRatings {
-  sleep: number;
-  stress: number;
-  nutrition: number;
-  recovery: number;
-  strength: number;
-}
-
-const DAY_NAMES = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
-
-function WorkoutPageInner() {
-  const { data: session, status } = useSession();
+function WorkoutContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-
   const fileId = searchParams.get("fileId");
-  const sheetName = searchParams.get("sheetName");
+  const fileNameParam = searchParams.get("fileName") || "Training Sheet";
 
-  const [step, setStep] = useState<Step>("day-select");
-  const [loading, setLoading] = useState(true);
+  const [step, setStep] = useState<Step>("loading");
   const [error, setError] = useState<string | null>(null);
 
-  // Day selector state
-  const [days, setDays] = useState<DayInfo[]>([]);
+  // Block picker
+  const [blockSheets, setBlockSheets] = useState<string[]>([]);
 
-  // Exercise state
-  const [selectedDay, setSelectedDay] = useState<string>("");
-  const [exercises, setExercises] = useState<ExerciseData[]>([]);
-  const [feedbackSlots, setFeedbackSlots] = useState<FeedbackSlots>({});
-  const [currentExerciseIdx, setCurrentExerciseIdx] = useState(0);
-  const [saving, setSaving] = useState(false);
+  // Day select
+  const [selectedSheet, setSelectedSheet] = useState("");
+  const [weeks, setWeeks] = useState<WeekInfo[]>([]);
+  const [selectedWeek, setSelectedWeek] = useState(0);
 
-  // Check-in state
-  const [ratings, setRatings] = useState<CheckInRatings>({
-    sleep: 0,
-    stress: 0,
-    nutrition: 0,
-    recovery: 0,
-    strength: 0,
+  // Check-in
+  const [ratings, setRatings] = useState<Record<string, number | null>>({
+    Sleep: null, Stress: null, Nutrition: null, Recovery: null, Strength: null,
   });
 
-  // Logged data for summary
-  const [loggedExercises, setLoggedExercises] = useState<LoggedExercise[]>([]);
+  // Exercise
+  const [selectedDay, setSelectedDay] = useState("");
+  const [exercises, setExercises] = useState<ExerciseData[]>([]);
+  const [feedbackSlots, setFeedbackSlots] = useState<FeedbackSlot[]>([]);
+  const [currentExIdx, setCurrentExIdx] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [results, setResults] = useState<ExerciseResult[]>([]);
+  const [loadUnit, setLoadUnit] = useState<"lbs" | "kg">("kg");
 
-  const todayLabel = useMemo(() => DAY_NAMES[new Date().getDay()], []);
-
-  // Fetch available days from the sheet
+  // ── Load block list ─────────────────────────────────────────────────────
   useEffect(() => {
-    if (!fileId || !sheetName || status !== "authenticated") return;
-
-    async function fetchDays() {
-      setLoading(true);
-      setError(null);
+    if (!fileId) { setError("Missing file info."); return; }
+    (async () => {
       try {
-        // Fetch each possible day in parallel and see which ones have exercises
-        const dayLabels = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
-        const promises = dayLabels.map(async (dayLabel) => {
-          const r = await fetch(
-            `/api/workout/day?fileId=${encodeURIComponent(fileId!)}&sheetName=${encodeURIComponent(sheetName!)}&dayLabel=${dayLabel}`
-          );
-          if (!r.ok) return null;
-          const data = await r.json();
-          if (data.exercises && data.exercises.length > 0) {
-            return {
-              dayLabel,
-              exerciseCount: data.exercises.length,
-              hasBeenLogged: data.exercises.some((e: any) => e.actualRPE !== null),
-            };
-          }
-          return null;
-        });
-
-        const results = await Promise.all(promises);
-        const validDays = results.filter(Boolean) as DayInfo[];
-        setDays(validDays);
-      } catch (err: any) {
-        setError(err.message || "Failed to load training days");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchDays();
-  }, [fileId, sheetName, status]);
-
-  // Fetch a specific day's exercises
-  const fetchDayExercises = useCallback(
-    async (dayLabel: string) => {
-      if (!fileId || !sheetName) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(
-          `/api/workout/day?fileId=${encodeURIComponent(fileId)}&sheetName=${encodeURIComponent(sheetName)}&dayLabel=${dayLabel}`
-        );
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || "Failed to load exercises");
-        }
+        const res = await fetch(`/api/workout/blocks?fileId=${fileId}`);
+        if (!res.ok) throw new Error("Failed to load sheets");
         const data = await res.json();
-        setExercises(data.exercises || []);
-        setFeedbackSlots(data.feedbackSlots || {});
-        setSelectedDay(dayLabel);
-        setStep("checkin");
-      } catch (err: any) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [fileId, sheetName]
-  );
+        setBlockSheets(data.blockSheets);
+        setStep("pick-block");
+      } catch (err: any) { setError(err.message); }
+    })();
+  }, [fileId]);
 
-  // Save feedback ratings to sheet
-  const saveFeedback = useCallback(async () => {
-    if (!fileId || !sheetName) return;
+  // ── Select block → load structure ───────────────────────────────────────
+  async function selectBlock(sheetName: string) {
+    setSelectedSheet(sheetName);
+    try {
+      const res = await fetch(`/api/workout/structure?fileId=${fileId}&sheetName=${encodeURIComponent(sheetName)}`);
+      if (!res.ok) throw new Error("Failed to load sheet structure");
+      const data = await res.json();
+      setWeeks(data.weeks);
+      setSelectedWeek(0);
+      setStep("day-select");
+    } catch (err: any) { setError(err.message); }
+  }
+
+  // ── Select day → load exercises ─────────────────────────────────────────
+  async function selectDay(dayLabel: string, weekIndex: number) {
+    setSelectedDay(dayLabel);
+    try {
+      const res = await fetch(
+        `/api/workout/day?fileId=${fileId}&sheetName=${encodeURIComponent(selectedSheet)}&dayLabel=${encodeURIComponent(dayLabel)}&weekIndex=${weekIndex}`
+      );
+      if (!res.ok) throw new Error("Failed to load exercises");
+      const data = await res.json();
+      setExercises(data.exercises);
+      setFeedbackSlots(data.feedbackSlots);
+      setLoadUnit(data.loadUnit);
+
+      const existing: Record<string, number | null> = {
+        Sleep: null, Stress: null, Nutrition: null, Recovery: null, Strength: null,
+      };
+      for (const fb of data.feedbackSlots) {
+        if (fb.value != null) existing[fb.category] = fb.value;
+      }
+      setRatings(existing);
+      setStep("checkin");
+    } catch (err: any) { setError(err.message); }
+  }
+
+  // ── Save feedback ───────────────────────────────────────────────────────
+  async function saveFeedback() {
+    const updates: { row: number; col: number; value: number }[] = [];
+    for (const fb of feedbackSlots) {
+      const val = ratings[fb.category];
+      if (val != null) updates.push({ row: fb.rowIndex, col: 13, value: val });
+    }
+    if (updates.length > 0) {
+      try {
+        await fetch("/api/workout/save", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileId, sheetName: selectedSheet, updates }),
+        });
+      } catch { /* non-blocking */ }
+    }
+    setCurrentExIdx(0);
+    setResults([]);
+    setStep("exercise");
+  }
+
+  // ── Save exercise + advance ─────────────────────────────────────────────
+  async function handleExerciseNext(data: { rpe: number | null; weight: number; weightChanged: boolean }) {
+    const ex = exercises[currentExIdx];
+    setSaving(true);
 
     const updates: { row: number; col: number; value: number }[] = [];
-    const feedbackKeys = ["sleep", "stress", "nutrition", "recovery", "strength"] as const;
+    if (data.rpe != null) updates.push({ row: ex.rowIndex, col: 10, value: data.rpe });
+    if (data.weightChanged) updates.push({ row: ex.rowIndex, col: 8, value: data.weight });
 
-    for (const key of feedbackKeys) {
-      const slot = feedbackSlots[key];
-      if (slot && ratings[key] > 0) {
-        updates.push({ row: slot.row, col: 13, value: ratings[key] }); // col N = index 13
-      }
+    if (updates.length > 0) {
+      try {
+        await fetch("/api/workout/save", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileId, sheetName: selectedSheet, updates }),
+        });
+      } catch { /* non-blocking */ }
     }
 
-    if (updates.length === 0) return;
+    setResults([...results, { exercise: ex, ...data }]);
+    setSaving(false);
 
-    try {
-      await fetch("/api/workout/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileId, sheetName, updates }),
-      });
-    } catch (err) {
-      console.error("Failed to save feedback:", err);
+    if (currentExIdx < exercises.length - 1) {
+      setCurrentExIdx(currentExIdx + 1);
+    } else {
+      setStep("complete");
     }
-  }, [fileId, sheetName, feedbackSlots, ratings]);
+  }
 
-  // Handle check-in submit
-  const handleCheckInSubmit = useCallback(async () => {
-    await saveFeedback();
-    setCurrentExerciseIdx(0);
-    setLoggedExercises([]);
-    setStep("exercise");
-  }, [saveFeedback]);
-
-  // Handle exercise next
-  const handleExerciseNext = useCallback(
-    async (data: { rpe: number | null; load: number; loadChanged: boolean }) => {
-      if (!fileId || !sheetName) return;
-      setSaving(true);
-
-      const exercise = exercises[currentExerciseIdx];
-      const updates: { row: number; col: number; value: number | string }[] = [];
-
-      // Write Actual RPE to col K (index 10)
-      if (data.rpe !== null) {
-        updates.push({ row: exercise.rowIndex, col: 10, value: data.rpe });
-      }
-
-      // Write Load to col I (index 8) if changed
-      if (data.loadChanged) {
-        updates.push({ row: exercise.rowIndex, col: 8, value: data.load });
-      }
-
-      if (updates.length > 0) {
-        try {
-          const res = await fetch("/api/workout/save", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ fileId, sheetName, updates }),
-          });
-          if (!res.ok) {
-            const errData = await res.json();
-            console.error("Save error:", errData.error);
-          }
-        } catch (err) {
-          console.error("Failed to save exercise:", err);
-        }
-      }
-
-      // Track logged exercise
-      setLoggedExercises((prev) => [
-        ...prev,
-        {
-          movement: exercise.movement,
-          load: data.load,
-          loadUnit: exercise.loadUnit,
-          rpe: data.rpe,
-          sets: exercise.sets,
-          reps: exercise.reps,
-        },
-      ]);
-
-      setSaving(false);
-
-      // Move to next or finish
-      if (currentExerciseIdx < exercises.length - 1) {
-        setCurrentExerciseIdx(currentExerciseIdx + 1);
-      } else {
-        setStep("complete");
-      }
-    },
-    [fileId, sheetName, exercises, currentExerciseIdx]
-  );
-
-  // Auth guard
-  if (status === "loading") {
+  // ── Render ──────────────────────────────────────────────────────────────
+  if (error) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="min-h-screen flex flex-col items-center justify-center px-4 text-center">
+        <p className="text-red-400 mb-4">{error}</p>
+        <button onClick={() => router.push("/dashboard")} className="text-teal-400 underline">Back to Dashboard</button>
       </div>
     );
   }
 
-  if (!session) {
-    router.push("/");
-    return null;
-  }
-
-  if (!fileId || !sheetName) {
+  if (step === "loading") {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 px-4">
-        <p className="text-muted-foreground">Missing file or sheet selection.</p>
-        <Button onClick={() => router.push("/dashboard")} variant="outline">
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Dashboard
-        </Button>
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
       </div>
     );
   }
 
-  // Compute summary stats
-  const totalTonnage = loggedExercises.reduce(
-    (sum, e) => sum + e.load * e.sets * e.reps,
-    0
-  );
-
-  return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto flex items-center justify-between h-14 px-4">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => {
-                if (step === "exercise" && currentExerciseIdx > 0) {
-                  setCurrentExerciseIdx(currentExerciseIdx - 1);
-                } else if (step === "exercise") {
-                  setStep("checkin");
-                } else if (step === "checkin") {
-                  setStep("day-select");
-                } else if (step === "complete") {
-                  // Don't go back from complete
-                  router.push("/dashboard");
-                } else {
-                  router.push("/dashboard");
-                }
-              }}
+  // ── Block picker ────────────────────────────────────────────────────────
+  if (step === "pick-block") {
+    return (
+      <div className="min-h-screen flex flex-col px-4 py-6 max-w-lg mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-xl font-bold text-zinc-100">Log Workout</h1>
+            <p className="text-sm text-zinc-400 truncate max-w-[250px]">{fileNameParam}</p>
+          </div>
+          <button onClick={() => router.push("/dashboard")} className="text-sm text-zinc-400 hover:text-zinc-200">
+            &#8592; Back
+          </button>
+        </div>
+        <p className="text-sm text-zinc-400 mb-4">Select a training block:</p>
+        <div className="space-y-2">
+          {blockSheets.map((name) => (
+            <button
+              key={name}
+              onClick={() => selectBlock(name)}
+              className="w-full text-left p-4 rounded-xl border border-zinc-700/50 bg-zinc-800/30 hover:bg-zinc-800/60 hover:border-teal-500/30 transition-all active:scale-[0.98]"
             >
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            <div className="flex items-center gap-2">
-              <Dumbbell className="h-5 w-5 text-primary" />
-              <span className="font-semibold text-sm">Workout</span>
-            </div>
-            {selectedDay && (
-              <>
-                <span className="text-muted-foreground">/</span>
-                <span className="text-sm text-muted-foreground">{selectedDay}</span>
-              </>
-            )}
+              <span className="font-medium text-zinc-200">{name}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Day selector ────────────────────────────────────────────────────────
+  if (step === "day-select") {
+    const today = new Date().toLocaleDateString("en-US", { weekday: "long" }).toUpperCase();
+    const currentDays = weeks[selectedWeek]?.days ?? [];
+
+    return (
+      <div className="min-h-screen flex flex-col px-4 py-6 max-w-lg mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-xl font-bold text-zinc-100">{selectedSheet}</h1>
+            <p className="text-sm text-zinc-400">Pick a training day</p>
+          </div>
+          <button onClick={() => setStep("pick-block")} className="text-sm text-zinc-400 hover:text-zinc-200">
+            &#8592; Blocks
+          </button>
+        </div>
+
+        {weeks.length > 1 && (
+          <div className="flex gap-2 overflow-x-auto pb-3 mb-4" style={{ scrollbarWidth: "none" }}>
+            {weeks.map((_, i) => (
+              <button
+                key={i}
+                onClick={() => setSelectedWeek(i)}
+                className={`flex-shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  selectedWeek === i ? "bg-teal-600 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                }`}
+              >
+                Week {i + 1}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {currentDays.map((day) => {
+            const isToday = today.startsWith(day.dayLabel.trim().slice(0, 3));
+            return (
+              <button
+                key={day.dayLabel}
+                onClick={() => selectDay(day.dayLabel, selectedWeek)}
+                className={`w-full text-left p-4 rounded-xl border transition-all active:scale-[0.98] ${
+                  isToday
+                    ? "bg-teal-600/10 border-teal-500/40 ring-1 ring-teal-500/20"
+                    : "bg-zinc-800/50 border-zinc-700/50 hover:bg-zinc-800"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className={`font-semibold ${isToday ? "text-teal-400" : "text-zinc-200"}`}>
+                      {day.dayLabel.charAt(0) + day.dayLabel.slice(1).toLowerCase()}
+                    </p>
+                    <p className="text-sm text-zinc-500">{day.exerciseCount} exercises</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isToday && <span className="text-xs bg-teal-600 text-white px-2 py-0.5 rounded-full">Today</span>}
+                    <svg className="w-5 h-5 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+          {currentDays.length === 0 && <p className="text-center text-zinc-500 mt-8">No training days found.</p>}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Check-in ────────────────────────────────────────────────────────────
+  if (step === "checkin") {
+    return (
+      <CheckInCard
+        ratings={ratings}
+        onRate={(cat, val) => setRatings((prev) => ({ ...prev, [cat]: val }))}
+        onContinue={saveFeedback}
+      />
+    );
+  }
+
+  // ── Exercise flow ───────────────────────────────────────────────────────
+  if (step === "exercise" && exercises[currentExIdx]) {
+    return (
+      <ExerciseCard
+        exercise={exercises[currentExIdx]}
+        index={currentExIdx}
+        total={exercises.length}
+        onNext={handleExerciseNext}
+        saving={saving}
+      />
+    );
+  }
+
+  // ── Complete ────────────────────────────────────────────────────────────
+  if (step === "complete") {
+    const totalTonnage = results.reduce((sum, r) => sum + r.exercise.sets * r.exercise.reps * r.weight, 0);
+
+    return (
+      <div className="min-h-screen flex flex-col px-4 py-6 max-w-lg mx-auto">
+        <div className="text-center mb-8">
+          <div className="text-5xl mb-3">&#127947;&#65039;</div>
+          <h1 className="text-2xl font-bold text-zinc-100">Workout Complete</h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            {results.length} exercises logged &middot; {selectedDay}
+          </p>
+        </div>
+
+        <div className="bg-zinc-800/50 rounded-xl p-4 mb-4 border border-zinc-700/50">
+          <p className="text-xs text-zinc-500 uppercase tracking-wide mb-2">Check-In</p>
+          <div className="grid grid-cols-5 gap-2 text-center">
+            {Object.entries(ratings).map(([cat, val]) => (
+              <div key={cat}>
+                <p className="text-lg font-bold text-zinc-100">{val ?? "–"}</p>
+                <p className="text-xs text-zinc-500">{cat}</p>
+              </div>
+            ))}
           </div>
         </div>
-      </header>
 
-      <main className="max-w-7xl mx-auto py-4">
-        {/* Error */}
-        {error && (
-          <div className="rounded-md bg-destructive/10 border border-destructive/20 p-4 mx-4 mb-4">
-            <p className="text-sm text-destructive">{error}</p>
+        <div className="bg-zinc-800/50 rounded-xl p-4 mb-4 border border-zinc-700/50">
+          <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">Session Volume</p>
+          <p className="text-2xl font-bold text-zinc-100">{totalTonnage.toLocaleString()} {loadUnit}</p>
+        </div>
+
+        <div className="bg-zinc-800/50 rounded-xl p-4 mb-6 border border-zinc-700/50">
+          <p className="text-xs text-zinc-500 uppercase tracking-wide mb-3">Exercises</p>
+          <div className="space-y-2.5">
+            {results.map((r, i) => (
+              <div key={i} className="flex items-center justify-between text-sm">
+                <span className="text-zinc-300 truncate flex-1 mr-3">{r.exercise.movement}</span>
+                <span className="text-zinc-400 tabular-nums text-right whitespace-nowrap">
+                  {r.weight}{loadUnit} &middot; RPE {r.rpe ?? "–"}
+                </span>
+              </div>
+            ))}
           </div>
-        )}
+        </div>
 
-        {/* Loading */}
-        {loading && (
-          <div className="flex flex-col items-center justify-center py-20 gap-4">
-            <Loader2 className="h-10 w-10 animate-spin text-primary" />
-            <p className="text-sm text-muted-foreground">Loading...</p>
-          </div>
-        )}
+        <div className="flex-1" />
+        <button
+          onClick={() => router.push("/dashboard")}
+          className="w-full py-4 rounded-xl text-base font-bold bg-teal-600 text-white hover:bg-teal-500 active:scale-[0.98] transition-all"
+        >
+          Back to Dashboard
+        </button>
+      </div>
+    );
+  }
 
-        {/* Day selector */}
-        {!loading && step === "day-select" && (
-          <DaySelector
-            days={days}
-            todayLabel={todayLabel}
-            onSelect={fetchDayExercises}
-          />
-        )}
+  return null;
+}
 
-        {/* Pre-workout check-in */}
-        {!loading && step === "checkin" && (
-          <CheckInCard
-            ratings={ratings}
-            onChange={setRatings}
-            onSubmit={handleCheckInSubmit}
-          />
-        )}
-
-        {/* Exercise flow */}
-        {!loading && step === "exercise" && exercises[currentExerciseIdx] && (
-          <ExerciseCard
-            key={exercises[currentExerciseIdx].rowIndex}
-            exercise={exercises[currentExerciseIdx]}
-            index={currentExerciseIdx}
-            total={exercises.length}
-            onNext={handleExerciseNext}
-            saving={saving}
-          />
-        )}
-
-        {/* Workout complete */}
-        {step === "complete" && (
-          <div className="flex flex-col items-center justify-center min-h-[70vh] px-4">
-            <div className="w-full max-w-md space-y-6 text-center">
-              <div className="inline-flex items-center justify-center h-16 w-16 rounded-full bg-green-500/10 mx-auto">
-                <Trophy className="h-8 w-8 text-green-500" />
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold">Workout Complete!</h2>
-                <p className="text-muted-foreground mt-1">{selectedDay}</p>
-              </div>
-
-              {/* Pre-workout ratings */}
-              <div className="border rounded-lg p-4 text-left space-y-2">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                  Pre-Workout Ratings
-                </h3>
-                <div className="grid grid-cols-5 gap-2 text-center">
-                  {(
-                    [
-                      ["Sleep", ratings.sleep],
-                      ["Stress", ratings.stress],
-                      ["Nutrition", ratings.nutrition],
-                      ["Recovery", ratings.recovery],
-                      ["Strength", ratings.strength],
-                    ] as const
-                  ).map(([label, val]) => (
-                    <div key={label}>
-                      <div className="text-lg font-bold">{val}</div>
-                      <div className="text-xs text-muted-foreground">{label}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Exercise summary */}
-              <div className="border rounded-lg p-4 text-left space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                  Exercises
-                </h3>
-                {loggedExercises.map((ex, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center justify-between py-1.5 border-b border-border/50 last:border-0"
-                  >
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-                      <span className="text-sm font-medium">{ex.movement}</span>
-                    </div>
-                    <div className="text-sm text-muted-foreground text-right">
-                      {ex.load > 0 && `${ex.load}${ex.loadUnit}`}
-                      {ex.rpe !== null && ` RPE ${ex.rpe}`}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Tonnage */}
-              {totalTonnage > 0 && (
-                <div className="border rounded-lg p-4">
-                  <div className="text-3xl font-bold">
-                    {totalTonnage.toLocaleString()}
-                    <span className="text-sm text-muted-foreground ml-1">
-                      {exercises[0]?.loadUnit || "kg"}
-                    </span>
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    Total Session Volume
-                  </div>
-                </div>
-              )}
-
-              <Button
-                onClick={() => router.push("/dashboard")}
-                className="w-full h-12 text-base font-semibold"
-                size="lg"
-              >
-                Back to Dashboard
-              </Button>
-            </div>
-          </div>
-        )}
-      </main>
-    </div>
+export default function WorkoutPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
+      </div>
+    }>
+      <WorkoutContent />
+    </Suspense>
   );
 }

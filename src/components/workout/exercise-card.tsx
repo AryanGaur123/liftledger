@@ -6,15 +6,15 @@ import RPEPicker from "./rpe-picker";
 import BarbellVisual from "./barbell-visual";
 import { ChevronRight, Weight, Eye, EyeOff } from "lucide-react";
 
-interface ExerciseData {
+export interface ExerciseData {
   rowIndex: number;
   movement: string;
-  tempo: string;
+  tempo: string | null;
   sets: number;
   reps: number;
   load: number;
   loadUnit: "lbs" | "kg";
-  prescribedRPE: string;
+  prescribedRPE: string | null;
   actualRPE: number | null;
   isBarbell: boolean;
 }
@@ -23,7 +23,7 @@ interface ExerciseCardProps {
   exercise: ExerciseData;
   index: number;
   total: number;
-  onNext: (data: { rpe: number | null; load: number; loadChanged: boolean }) => void;
+  onNext: (data: { rpe: number | null; weight: number; weightChanged: boolean }) => void;
   saving: boolean;
 }
 
@@ -141,7 +141,7 @@ export default function ExerciseCard({
 
         {/* Next / Finish button */}
         <Button
-          onClick={() => onNext({ rpe, load: weight, loadChanged: weightChanged })}
+          onClick={() => onNext({ rpe, weight, weightChanged })}
           disabled={saving}
           className="w-full h-12 text-base font-semibold gap-2"
           size="lg"

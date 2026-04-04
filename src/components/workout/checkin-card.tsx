@@ -4,36 +4,28 @@ import { cn } from "@/lib/utils";
 import { Moon, Brain, Apple, Heart, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-interface CheckInRatings {
-  sleep: number;
-  stress: number;
-  nutrition: number;
-  recovery: number;
-  strength: number;
-}
-
 interface CheckInCardProps {
-  ratings: CheckInRatings;
-  onChange: (ratings: CheckInRatings) => void;
-  onSubmit: () => void;
+  ratings: Record<string, number | null>;
+  onRate: (category: string, value: number) => void;
+  onContinue: () => void;
 }
 
 const CATEGORIES: {
-  key: keyof CheckInRatings;
+  key: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   lowLabel: string;
   highLabel: string;
 }[] = [
-  { key: "sleep", label: "Sleep", icon: Moon, lowLabel: "Poor", highLabel: "Great" },
-  { key: "stress", label: "Stress", icon: Brain, lowLabel: "High", highLabel: "Low" },
-  { key: "nutrition", label: "Nutrition", icon: Apple, lowLabel: "Poor", highLabel: "Great" },
-  { key: "recovery", label: "Recovery", icon: Heart, lowLabel: "Sore", highLabel: "Fresh" },
-  { key: "strength", label: "Strength", icon: Zap, lowLabel: "Weak", highLabel: "Strong" },
+  { key: "Sleep", label: "Sleep", icon: Moon, lowLabel: "Poor", highLabel: "Great" },
+  { key: "Stress", label: "Stress", icon: Brain, lowLabel: "High", highLabel: "Low" },
+  { key: "Nutrition", label: "Nutrition", icon: Apple, lowLabel: "Poor", highLabel: "Great" },
+  { key: "Recovery", label: "Recovery", icon: Heart, lowLabel: "Sore", highLabel: "Fresh" },
+  { key: "Strength", label: "Strength", icon: Zap, lowLabel: "Weak", highLabel: "Strong" },
 ];
 
-export default function CheckInCard({ ratings, onChange, onSubmit }: CheckInCardProps) {
-  const allRated = Object.values(ratings).every((v) => v > 0);
+export default function CheckInCard({ ratings, onRate, onContinue }: CheckInCardProps) {
+  const allRated = CATEGORIES.every(({ key }) => ratings[key] != null);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[70vh] px-4">
@@ -59,7 +51,7 @@ export default function CheckInCard({ ratings, onChange, onSubmit }: CheckInCard
                     <button
                       key={val}
                       type="button"
-                      onClick={() => onChange({ ...ratings, [key]: val })}
+                      onClick={() => onRate(key, val)}
                       className={cn(
                         "w-10 h-10 rounded-md text-sm font-semibold transition-all",
                         "border hover:scale-105 active:scale-95",
@@ -79,7 +71,7 @@ export default function CheckInCard({ ratings, onChange, onSubmit }: CheckInCard
         </div>
 
         <Button
-          onClick={onSubmit}
+          onClick={onContinue}
           disabled={!allRated}
           className="w-full h-12 text-base font-semibold"
           size="lg"
