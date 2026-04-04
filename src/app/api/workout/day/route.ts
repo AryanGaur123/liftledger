@@ -135,11 +135,31 @@ export async function GET(req: Request) {
 
     const sets = typeof row[6] === "number" ? row[6] : 1;
     const reps = typeof row[7] === "number" ? row[7] : 0;
-    const load = typeof row[8] === "number" ? row[8] : 0;
+    let load = typeof row[8] === "number" ? row[8] : 0;
     const prescribedRPE = row[9] != null ? String(row[9]) : null;
     const actualRPE = typeof row[10] === "number" ? row[10] : null;
 
     if (reps <= 0) continue;
+
+    // Auto-calculate drop percentage loads
+    // "Drop X%" in the RPE col with no load → find the most recent exercise
+    // with the same base movement name and apply the percentage drop
+    const dropMatch = prescribedRPE?.match(/drop\s*(\d+(?:\.\d+)?)%/i);
+    if (dropMatch && load === 0 && exercises.length > 0) {
+      const dropPct = parseFloat(dropMatch[1]) / 100;
+      // Strip trailing parenthetical like "(Primary)" for loose matching
+      const baseMovement = movement.replace(/\s*\(.*\)\s*$/, "").trim().toLowerCase();
+      // Search backwards for the most recent exercise with a matching base name
+      for (let j = exercises.length - 1; j >= 0; j--) {
+        const prev = exercises[j];
+        const prevBase = prev.movement.replace(/\s*\(.*\)\s*$/, "").trim().toLowerCase();
+        if (prevBase === baseMovement && prev.load > 0) {
+          // Round to nearest 5 lbs for practical loading
+          load = Math.round((prev.load * (1 - dropPct)) / 5) * 5;
+          break;
+        }
+      }
+    }
 
     exercises.push({
       rowIndex: i + 1,
