@@ -18,6 +18,7 @@ import {
   Loader2,
   BarChart3,
   ChevronDown,
+  Dumbbell,
 } from "lucide-react";
 
 interface BlockMetricsData {
@@ -83,6 +84,14 @@ export default function DashboardPage() {
   // Weight unit toggle: purely cosmetic — only changes the label shown, never converts numbers
   const [displayUnit, setDisplayUnit] = useState<"lbs" | "kg">("lbs");
   const dropdownRef = useRef<HTMLDivElement>(null);
+  // Mode: null = show mode picker after file selection, "analytics" = show dashboard
+  const [mode, setMode] = useState<"picker" | "analytics" | null>(null);
+  // Store selected file info for workout route
+  const [selectedFile, setSelectedFile] = useState<{
+    id: string;
+    name: string;
+    mimeType: string;
+  } | null>(null);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -135,6 +144,7 @@ export default function DashboardPage() {
     setAnalyzing(true);
     setError(null);
     setFileName(file.name);
+    setSelectedFile(file);
 
     try {
       const res = await fetch("/api/analyze", {
@@ -154,6 +164,8 @@ export default function DashboardPage() {
       setSelectedBlockName(data.latestBlock?.name || "");
       // Default to lbs label
       setDisplayUnit("lbs");
+      // Show mode picker instead of immediately showing analytics
+      setMode("picker");
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -162,11 +174,18 @@ export default function DashboardPage() {
   };
 
   const handleBack = () => {
+    if (mode === "analytics") {
+      // Go back to mode picker
+      setMode("picker");
+      return;
+    }
     setAnalysis(null);
     setError(null);
     setFileName("");
     setSelectedBlockName("");
     setDisplayUnit("lbs");
+    setMode(null);
+    setSelectedFile(null);
   };
 
   // Calculate block-level KPIs — numbers are never converted, only the unit label changes
@@ -296,8 +315,58 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Mode picker state — appears after file selection & analysis */}
+        {analysis && mode === "picker" && !analyzing && !error && (
+          <div className="flex flex-col items-center justify-center py-16 px-4">
+            <div className="text-center mb-8">
+              <h1 className="text-xl font-bold">{fileName}</h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                What would you like to do?
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-lg">
+              {/* Analytics card */}
+              <button
+                onClick={() => setMode("analytics")}
+                className="group flex flex-col items-center gap-4 p-8 rounded-xl border bg-card hover:border-primary/50 hover:bg-accent/50 transition-all active:scale-[0.98]"
+              >
+                <div className="h-14 w-14 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
+                  <BarChart3 className="h-7 w-7 text-primary" />
+                </div>
+                <div>
+                  <div className="font-semibold">Analytics</div>
+                  <div className="text-sm text-muted-foreground mt-1">
+                    View training metrics &amp; trends
+                  </div>
+                </div>
+              </button>
+              {/* Log Workout card */}
+              <button
+                onClick={() => {
+                  if (!selectedFile || !analysis) return;
+                  const latestBlock = analysis.latestBlock?.name || analysis.blocks?.[0]?.name || "";
+                  router.push(
+                    `/workout?fileId=${encodeURIComponent(selectedFile.id)}&sheetName=${encodeURIComponent(latestBlock)}`
+                  );
+                }}
+                className="group flex flex-col items-center gap-4 p-8 rounded-xl border bg-card hover:border-primary/50 hover:bg-accent/50 transition-all active:scale-[0.98]"
+              >
+                <div className="h-14 w-14 rounded-xl bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
+                  <Dumbbell className="h-7 w-7 text-primary" />
+                </div>
+                <div>
+                  <div className="font-semibold">Log Workout</div>
+                  <div className="text-sm text-muted-foreground mt-1">
+                    Start today&apos;s training session
+                  </div>
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Dashboard state */}
-        {analysis && kpiData && activeBlock && activeMetrics && (
+        {analysis && mode === "analytics" && kpiData && activeBlock && activeMetrics && (
           <div className="space-y-4">
             {/* Block info header with selector */}
             <div className="flex items-center justify-between flex-wrap gap-2">
