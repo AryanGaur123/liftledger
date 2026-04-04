@@ -27,8 +27,6 @@ interface ExerciseCardProps {
   saving: boolean;
 }
 
-const LBS_TO_KG = 1 / 2.20462;
-
 export default function ExerciseCard({
   exercise,
   index,
@@ -48,9 +46,8 @@ export default function ExerciseCard({
   const weightChanged = weight !== null && weight !== exercise.load;
   const isLast = index === total - 1;
 
-  // For barbell visual, always treat the number as lbs and convert to kg for plate math
-  // (all their weights are in lbs regardless of the label in the sheet)
-  const weightForBar = weight != null ? weight * LBS_TO_KG : 0;
+  // Weights are always in lbs regardless of the cosmetic unit label in the sheet
+  const weightForBar = weight ?? 0;
 
   const canShowBar = exercise.isBarbell && weight != null && weight > 0;
 
@@ -202,7 +199,7 @@ export default function ExerciseCard({
           {/* Barbell plate visual */}
           {showBar && exercise.isBarbell && canShowBar && (
             <div className="border rounded-lg p-3 bg-secondary/50">
-              <BarbellVisual totalWeight={weightForBar} />
+              <BarbellVisual weightLbs={weightForBar} />
             </div>
           )}
         </div>
