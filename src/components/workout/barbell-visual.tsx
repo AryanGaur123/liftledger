@@ -51,6 +51,15 @@ function calculatePlates(targetLbs: number): { plates: PlateInfo[]; actualKg: nu
   const actualKg = BAR_KG + totalPlateKg * 2;
   const actualLbs = actualKg * KG_TO_LBS;
 
+  // Check if adding one more 1.25 per side gets closer to the target
+  const smallestPlate = KG_PLATES[KG_PLATES.length - 1]; // 1.25 kg
+  const withExtraKg = actualKg + smallestPlate.weight * 2;
+  const withExtraLbs = withExtraKg * KG_TO_LBS;
+  if (Math.abs(withExtraLbs - targetLbs) < Math.abs(actualLbs - targetLbs)) {
+    result.push(smallestPlate);
+    return { plates: result, actualKg: withExtraKg, actualLbs: withExtraLbs };
+  }
+
   return { plates: result, actualKg, actualLbs };
 }
 
