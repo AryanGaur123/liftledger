@@ -103,6 +103,7 @@ export async function GET(req: Request) {
     prescribedRPE: string | null;
     actualRPE: number | null;
     isBarbell: boolean;
+    dropFromLoad: number | null;  // source weight when load was calculated from Drop X%
   }
 
   interface FeedbackSlot {
@@ -145,16 +146,15 @@ export async function GET(req: Request) {
     // "Drop X%" in the RPE col with no load → find the most recent exercise
     // with the same base movement name and apply the percentage drop
     const dropMatch = prescribedRPE?.match(/drop\s*(\d+(?:\.\d+)?)%/i);
+    let dropFromLoad: number | null = null;
     if (dropMatch && load === 0 && exercises.length > 0) {
       const dropPct = parseFloat(dropMatch[1]) / 100;
-      // Strip trailing parenthetical like "(Primary)" for loose matching
       const baseMovement = movement.replace(/\s*\(.*\)\s*$/, "").trim().toLowerCase();
-      // Search backwards for the most recent exercise with a matching base name
       for (let j = exercises.length - 1; j >= 0; j--) {
         const prev = exercises[j];
         const prevBase = prev.movement.replace(/\s*\(.*\)\s*$/, "").trim().toLowerCase();
         if (prevBase === baseMovement && prev.load > 0) {
-          // Round to nearest 5 lbs for practical loading
+          dropFromLoad = prev.load;
           load = Math.round((prev.load * (1 - dropPct)) / 5) * 5;
           break;
         }
@@ -167,8 +167,12 @@ export async function GET(req: Request) {
       tempo: row[5] != null ? String(row[5]).trim() || null : null,
       sets, reps, load, loadUnit, prescribedRPE, actualRPE,
       isBarbell: BARBELL_RE.test(movement) && !NOT_BARBELL_RE.test(movement),
+      dropFromLoad: dropFromLoad,
     });
   }
 
-  return NextResponse.json({ sheetName, dayLabel, weekIndex, loadUnit, exercises, feedbackSlots });
+  const checkInComplete = feedbackSlots.length >= 3 &&
+    feedbackSlots.filter(fb => fb.value != null).length === feedbackSlots.length;
+
+  return NextResponse.json({ sheetName, dayLabel, weekIndex, loadUnit, exercises, feedbackSlots, checkInComplete });
 }

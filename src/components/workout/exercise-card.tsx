@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import RPEPicker from "./rpe-picker";
 import BarbellVisual from "./barbell-visual";
-import { ChevronRight, Weight, Eye, EyeOff } from "lucide-react";
+import { ChevronRight, Weight, Eye, EyeOff, Plus, Minus } from "lucide-react";
 
 export interface ExerciseData {
   rowIndex: number;
@@ -17,6 +17,7 @@ export interface ExerciseData {
   prescribedRPE: string | null;
   actualRPE: number | null;
   isBarbell: boolean;
+  dropFromLoad: number | null;
 }
 
 interface ExerciseCardProps {
@@ -25,6 +26,9 @@ interface ExerciseCardProps {
   total: number;
   onNext: (data: { rpe: number | null; weight: number; weightChanged: boolean }) => void;
   saving: boolean;
+  savedRpe?: number | null;   // flash "saved" confirmation
+  displayUnit: "lbs" | "kg";
+  onUnitChange: (u: "lbs" | "kg") => void;
 }
 
 export default function ExerciseCard({
@@ -33,172 +37,196 @@ export default function ExerciseCard({
   total,
   onNext,
   saving,
+  savedRpe,
+  displayUnit,
+  onUnitChange,
 }: ExerciseCardProps) {
   const [rpe, setRpe] = useState<number | null>(exercise.actualRPE);
-  // If no programmed weight, start as null so the user must enter one
   const [weight, setWeight] = useState<number | null>(exercise.load > 0 ? exercise.load : null);
-  const [editingWeight, setEditingWeight] = useState(exercise.load === 0 && exercise.isBarbell ? true : false);
-  const [showBar, setShowBar] = useState(false);
-  // Cosmetic unit label — no number conversion, just what to call it
-  const [displayUnit, setDisplayUnit] = useState<"lbs" | "kg">(exercise.loadUnit);
+  const [editingWeight, setEditingWeight] = useState(exercise.load === 0);
+  // Auto-show bar on barbell lifts that already have a programmed weight
+  const [showBar, setShowBar] = useState(exercise.isBarbell && exercise.load > 0);
+  const [justSaved, setJustSaved] = useState(false);
 
   const noWeightProgrammed = exercise.load === 0;
-  const weightChanged = weight !== null && weight !== exercise.load;
   const isLast = index === total - 1;
-
-  // Weights are always in lbs regardless of the cosmetic unit label in the sheet
-  const weightForBar = weight ?? 0;
-
   const canShowBar = exercise.isBarbell && weight != null && weight > 0;
+  const weightForBar = weight ?? 0;
+  const isDropSet = exercise.dropFromLoad != null;
+
+  // Flash "Saved" after each exercise save
+  useEffect(() => {
+    if (saving === false && savedRpe !== undefined) {
+      setJustSaved(true);
+      const t = setTimeout(() => setJustSaved(false), 1500);
+      return () => clearTimeout(t);
+    }
+  }, [saving, savedRpe]);
+
+  function adjustWeight(delta: number) {
+    setWeight((prev) => {
+      const base = prev ?? 0;
+      return Math.max(0, Math.round((base + delta) * 10) / 10);
+    });
+  }
+
+  // Build the prescription line
+  function prescriptionLine() {
+    const parts: string[] = [`${exercise.sets}×${exercise.reps}`];
+    if (exercise.load > 0) parts.push(`@ ${exercise.load} ${displayUnit}`);
+    if (isDropSet && exercise.dropFromLoad) {
+      const pct = exercise.prescribedRPE?.match(/drop\s*(\d+(?:\.\d+)?)%/i)?.[1];
+      parts.push(`drop ${pct}% of ${exercise.dropFromLoad} ${displayUnit} → ${exercise.load} ${displayUnit}`);
+    } else if (exercise.prescribedRPE && !/drop/i.test(exercise.prescribedRPE)) {
+      parts.push(exercise.prescribedRPE);
+    }
+    return parts.join("  ·  ");
+  }
 
   return (
     <div className="flex flex-col min-h-[100dvh] px-4 py-4 max-w-lg mx-auto">
-      {/* Progress + unit toggle row */}
-      <div className="flex items-center justify-between mb-4">
+      {/* Progress + unit toggle */}
+      <div className="flex items-center justify-between mb-3">
         <span className="text-xs text-muted-foreground">
-          Exercise {index + 1} of {total}
+          {index + 1} / {total}
         </span>
-        {/* Cosmetic unit toggle */}
         <div className="flex items-center gap-0.5 rounded-md border p-0.5 text-xs">
-          <button
-            onClick={() => setDisplayUnit("lbs")}
-            className={`px-2.5 py-1 rounded transition-colors ${
-              displayUnit === "lbs"
-                ? "bg-primary text-primary-foreground font-semibold"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            lbs
-          </button>
-          <button
-            onClick={() => setDisplayUnit("kg")}
-            className={`px-2.5 py-1 rounded transition-colors ${
-              displayUnit === "kg"
-                ? "bg-primary text-primary-foreground font-semibold"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            kg
-          </button>
+          {(["lbs", "kg"] as const).map((u) => (
+            <button
+              key={u}
+              onClick={() => onUnitChange(u)}
+              className={`px-2.5 py-1 rounded transition-colors ${
+                displayUnit === u
+                  ? "bg-primary text-primary-foreground font-semibold"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {u}
+            </button>
+          ))}
         </div>
       </div>
 
       {/* Progress bar */}
-      <div className="w-full bg-secondary rounded-full h-1.5 mb-6">
+      <div className="w-full bg-secondary rounded-full h-1 mb-5">
         <div
-          className="bg-primary h-1.5 rounded-full transition-all duration-300"
+          className="bg-primary h-1 rounded-full transition-all duration-300"
           style={{ width: `${((index + 1) / total) * 100}%` }}
         />
       </div>
 
-      {/* Exercise info */}
-      <div className="flex-1 flex flex-col justify-center space-y-6">
+      <div className="flex-1 flex flex-col justify-center space-y-5">
+        {/* Movement name + tempo */}
         <div className="text-center space-y-1">
           <h2 className="text-2xl font-bold leading-tight">{exercise.movement}</h2>
           {exercise.tempo && (
-            <p className="text-sm text-muted-foreground">Tempo: {exercise.tempo}</p>
+            <p className="text-xs text-muted-foreground tracking-wide uppercase">
+              Tempo {exercise.tempo}
+            </p>
           )}
         </div>
 
-        {/* Prescribed prescription line */}
+        {/* Prescription line */}
         <div className="text-center">
-          <p className="text-lg text-muted-foreground">
-            {exercise.sets}&times;{exercise.reps}
-            {exercise.load > 0 && ` @ ${exercise.load}${displayUnit}`}
-            {exercise.prescribedRPE && ` RPE ${exercise.prescribedRPE}`}
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            {prescriptionLine()}
           </p>
+          {/* Previous RPE hint */}
+          {exercise.actualRPE != null && (
+            <p className="text-xs text-muted-foreground/60 mt-0.5">
+              Last session: RPE {exercise.actualRPE}
+            </p>
+          )}
         </div>
 
         {/* Weight section */}
         <div className="space-y-3">
-          <div className="flex items-center justify-center gap-3">
-            <Weight className="h-5 w-5 text-muted-foreground shrink-0" />
+          <div className="flex items-center justify-center gap-2">
+            {/* Decrement */}
+            <button
+              onClick={() => adjustWeight(-2.5)}
+              className="h-9 w-9 rounded-full border bg-secondary flex items-center justify-center hover:bg-accent active:scale-95 transition-all"
+            >
+              <Minus className="h-3.5 w-3.5" />
+            </button>
 
-            {noWeightProgrammed && editingWeight ? (
-              /* No programmed weight — full input to enter what they're doing */
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  placeholder="Enter weight"
-                  value={weight ?? ""}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    setWeight(isNaN(v) ? null : v);
-                  }}
-                  onBlur={() => { if (weight != null && weight > 0) setEditingWeight(false); }}
-                  autoFocus
-                  step="any"
-                  className="w-36 h-10 text-center text-lg font-bold bg-secondary border border-border rounded-md focus:ring-2 focus:ring-primary focus:outline-none"
-                />
-                <span className="text-base text-muted-foreground">{displayUnit}</span>
-              </div>
-            ) : noWeightProgrammed ? (
-              /* No weight entered yet — tap to open input */
-              <button
-                onClick={() => setEditingWeight(true)}
-                className="text-lg font-semibold text-primary underline underline-offset-4"
-              >
-                {weight != null ? `${weight}${displayUnit}` : "Tap to enter weight"}
-              </button>
-            ) : editingWeight ? (
-              /* Programmed weight — inline edit */
-              <input
-                type="number"
-                inputMode="decimal"
-                value={weight ?? ""}
-                onChange={(e) => {
-                  const v = parseFloat(e.target.value);
-                  setWeight(isNaN(v) ? null : v);
-                }}
-                onBlur={() => setEditingWeight(false)}
-                autoFocus
-                step="any"
-                className="w-28 h-10 text-center text-lg font-bold bg-secondary border border-border rounded-md focus:ring-2 focus:ring-primary focus:outline-none"
-              />
-            ) : (
-              /* Programmed weight display */
-              <button
-                onClick={() => setEditingWeight(true)}
-                className="text-2xl font-bold hover:text-primary transition-colors"
-              >
-                {weight}{displayUnit}
-                {weightChanged && (
-                  <span className="text-xs text-primary ml-1">(edited)</span>
-                )}
-              </button>
-            )}
+            <div className="flex items-center gap-1.5">
+              <Weight className="h-4 w-4 text-muted-foreground shrink-0" />
+
+              {editingWeight ? (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={weight ?? ""}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      setWeight(isNaN(v) ? null : v);
+                    }}
+                    onBlur={() => {
+                      if (weight != null && weight > 0) setEditingWeight(false);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && weight != null && weight > 0) setEditingWeight(false);
+                    }}
+                    autoFocus
+                    step="2.5"
+                    className="w-24 h-10 text-center text-xl font-bold bg-secondary border border-primary rounded-md focus:ring-2 focus:ring-primary focus:outline-none"
+                  />
+                  <span className="text-sm text-muted-foreground">{displayUnit}</span>
+                </div>
+              ) : weight != null ? (
+                <button
+                  onClick={() => setEditingWeight(true)}
+                  className="text-2xl font-bold hover:text-primary transition-colors tabular-nums"
+                >
+                  {weight}
+                  <span className="text-base font-normal text-muted-foreground ml-0.5">{displayUnit}</span>
+                  {weight !== exercise.load && exercise.load > 0 && (
+                    <span className="text-xs text-primary ml-1.5">(edited)</span>
+                  )}
+                </button>
+              ) : (
+                <button
+                  onClick={() => setEditingWeight(true)}
+                  className="text-base font-semibold text-primary underline underline-offset-4"
+                >
+                  Tap to enter weight
+                </button>
+              )}
+            </div>
+
+            {/* Increment */}
+            <button
+              onClick={() => adjustWeight(2.5)}
+              className="h-9 w-9 rounded-full border bg-secondary flex items-center justify-center hover:bg-accent active:scale-95 transition-all"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
           </div>
 
-          {/* Show Bar button — visible on barbell lifts once weight is set */}
+          {/* Show/Hide Bar */}
           {exercise.isBarbell && canShowBar && (
             <div className="text-center">
-              <Button
-                variant="outline"
-                size="sm"
+              <button
                 onClick={() => setShowBar(!showBar)}
-                className="gap-1.5"
+                className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
               >
-                {showBar ? (
-                  <EyeOff className="h-3.5 w-3.5" />
-                ) : (
-                  <Eye className="h-3.5 w-3.5" />
-                )}
-                {showBar ? "Hide Bar" : "Show Bar"}
-              </Button>
+                {showBar ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                {showBar ? "Hide plates" : "Show plates"}
+              </button>
             </div>
           )}
 
-          {/* Hint to set weight before showing bar */}
           {exercise.isBarbell && !canShowBar && (
-            <p className="text-center text-xs text-muted-foreground">
-              Enter weight above to see plate loading
+            <p className="text-center text-xs text-muted-foreground/60">
+              Enter weight to see plate loading
             </p>
           )}
 
-          {/* Barbell plate visual */}
-          {showBar && exercise.isBarbell && canShowBar && (
-            <div className="border rounded-lg p-3 bg-secondary/50">
+          {showBar && canShowBar && (
+            <div className="border rounded-xl p-3 bg-secondary/40">
               <BarbellVisual weightLbs={weightForBar} />
             </div>
           )}
@@ -207,7 +235,7 @@ export default function ExerciseCard({
         {/* RPE picker */}
         <RPEPicker value={rpe} onChange={setRpe} />
 
-        {/* Next / Finish button */}
+        {/* Next button */}
         <Button
           onClick={() => onNext({ rpe, weight: weight ?? 0, weightChanged: weight !== exercise.load })}
           disabled={saving || (noWeightProgrammed && (weight == null || weight === 0))}
@@ -216,12 +244,14 @@ export default function ExerciseCard({
         >
           {saving ? (
             "Saving..."
+          ) : justSaved ? (
+            "Saved ✓"
           ) : isLast ? (
             "Finish Workout"
           ) : (
             <>
               Next Exercise
-              <ChevronRight className="h-5 w-5" />
+              <ChevronRight className="h-4 w-4" />
             </>
           )}
         </Button>

@@ -41,8 +41,11 @@ function WorkoutContent() {
   const [feedbackSlots, setFeedbackSlots] = useState<FeedbackSlot[]>([]);
   const [currentExIdx, setCurrentExIdx] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [lastSavedRpe, setLastSavedRpe] = useState<number | null | undefined>(undefined);
   const [results, setResults] = useState<ExerciseResult[]>([]);
-  const [loadUnit, setLoadUnit] = useState<"lbs" | "kg">("kg");
+  const [loadUnit, setLoadUnit] = useState<"lbs" | "kg">("lbs");
+  // Persisted unit display preference across all exercises in the session
+  const [displayUnit, setDisplayUnit] = useState<"lbs" | "kg">("lbs");
 
   // ── Load block list ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -83,6 +86,7 @@ function WorkoutContent() {
       setExercises(data.exercises);
       setFeedbackSlots(data.feedbackSlots);
       setLoadUnit(data.loadUnit);
+      setDisplayUnit(data.loadUnit === "lbs" ? "lbs" : "lbs"); // always default to lbs display
 
       const existing: Record<string, number | null> = {
         Sleep: null, Stress: null, Nutrition: null, Recovery: null, Strength: null,
@@ -91,7 +95,15 @@ function WorkoutContent() {
         if (fb.value != null) existing[fb.category] = fb.value;
       }
       setRatings(existing);
-      setStep("checkin");
+
+      // Skip check-in if all slots already have ratings from a previous session
+      if (data.checkInComplete) {
+        setCurrentExIdx(0);
+        setResults([]);
+        setStep("exercise");
+      } else {
+        setStep("checkin");
+      }
     } catch (err: any) { setError(err.message); }
   }
 
@@ -119,6 +131,7 @@ function WorkoutContent() {
   async function handleExerciseNext(data: { rpe: number | null; weight: number; weightChanged: boolean }) {
     const ex = exercises[currentExIdx];
     setSaving(true);
+    setLastSavedRpe(undefined);
 
     const updates: { row: number; col: number; value: number }[] = [];
     if (data.rpe != null) updates.push({ row: ex.rowIndex, col: 10, value: data.rpe });
@@ -133,7 +146,8 @@ function WorkoutContent() {
       } catch { /* non-blocking */ }
     }
 
-    setResults([...results, { exercise: ex, ...data }]);
+    setResults((prev) => [...prev, { exercise: ex, ...data }]);
+    setLastSavedRpe(data.rpe);
     setSaving(false);
 
     if (currentExIdx < exercises.length - 1) {
@@ -148,7 +162,9 @@ function WorkoutContent() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center px-4 text-center">
         <p className="text-red-400 mb-4">{error}</p>
-        <button onClick={() => router.push("/dashboard")} className="text-teal-400 underline">Back to Dashboard</button>
+        <button onClick={() => router.push("/dashboard")} className="text-teal-400 underline">
+          Back to Dashboard
+        </button>
       </div>
     );
   }
@@ -167,22 +183,22 @@ function WorkoutContent() {
       <div className="min-h-screen flex flex-col px-4 py-6 max-w-lg mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-xl font-bold text-zinc-100">Log Workout</h1>
-            <p className="text-sm text-zinc-400 truncate max-w-[250px]">{fileNameParam}</p>
+            <h1 className="text-xl font-bold">Log Workout</h1>
+            <p className="text-sm text-muted-foreground truncate max-w-[250px]">{fileNameParam}</p>
           </div>
-          <button onClick={() => router.push("/dashboard")} className="text-sm text-zinc-400 hover:text-zinc-200">
-            &#8592; Back
+          <button onClick={() => router.push("/dashboard")} className="text-sm text-muted-foreground hover:text-foreground">
+            ← Back
           </button>
         </div>
-        <p className="text-sm text-zinc-400 mb-4">Select a training block:</p>
+        <p className="text-sm text-muted-foreground mb-4">Select a training block:</p>
         <div className="space-y-2">
           {blockSheets.map((name) => (
             <button
               key={name}
               onClick={() => selectBlock(name)}
-              className="w-full text-left p-4 rounded-xl border border-zinc-700/50 bg-zinc-800/30 hover:bg-zinc-800/60 hover:border-teal-500/30 transition-all active:scale-[0.98]"
+              className="w-full text-left p-4 rounded-xl border border-border bg-card hover:bg-accent hover:border-primary/30 transition-all active:scale-[0.98]"
             >
-              <span className="font-medium text-zinc-200">{name}</span>
+              <span className="font-medium">{name}</span>
             </button>
           ))}
         </div>
@@ -199,11 +215,11 @@ function WorkoutContent() {
       <div className="min-h-screen flex flex-col px-4 py-6 max-w-lg mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-xl font-bold text-zinc-100">{selectedSheet}</h1>
-            <p className="text-sm text-zinc-400">Pick a training day</p>
+            <h1 className="text-xl font-bold">{selectedSheet}</h1>
+            <p className="text-sm text-muted-foreground">Pick a training day</p>
           </div>
-          <button onClick={() => setStep("pick-block")} className="text-sm text-zinc-400 hover:text-zinc-200">
-            &#8592; Blocks
+          <button onClick={() => setStep("pick-block")} className="text-sm text-muted-foreground hover:text-foreground">
+            ← Blocks
           </button>
         </div>
 
@@ -214,7 +230,9 @@ function WorkoutContent() {
                 key={i}
                 onClick={() => setSelectedWeek(i)}
                 className={`flex-shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                  selectedWeek === i ? "bg-teal-600 text-white" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                  selectedWeek === i
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary text-muted-foreground hover:bg-accent"
                 }`}
               >
                 Week {i + 1}
@@ -232,20 +250,24 @@ function WorkoutContent() {
                 onClick={() => selectDay(day.dayLabel, selectedWeek)}
                 className={`w-full text-left p-4 rounded-xl border transition-all active:scale-[0.98] ${
                   isToday
-                    ? "bg-teal-600/10 border-teal-500/40 ring-1 ring-teal-500/20"
-                    : "bg-zinc-800/50 border-zinc-700/50 hover:bg-zinc-800"
+                    ? "bg-primary/10 border-primary/40 ring-1 ring-primary/20"
+                    : "bg-card border-border hover:bg-accent"
                 }`}
               >
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className={`font-semibold ${isToday ? "text-teal-400" : "text-zinc-200"}`}>
+                    <p className={`font-semibold ${isToday ? "text-primary" : ""}`}>
                       {day.dayLabel.charAt(0) + day.dayLabel.slice(1).toLowerCase()}
                     </p>
-                    <p className="text-sm text-zinc-500">{day.exerciseCount} exercises</p>
+                    <p className="text-sm text-muted-foreground">{day.exerciseCount} exercises</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    {isToday && <span className="text-xs bg-teal-600 text-white px-2 py-0.5 rounded-full">Today</span>}
-                    <svg className="w-5 h-5 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    {isToday && (
+                      <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded-full">
+                        Today
+                      </span>
+                    )}
+                    <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
                   </div>
@@ -253,7 +275,9 @@ function WorkoutContent() {
               </button>
             );
           })}
-          {currentDays.length === 0 && <p className="text-center text-zinc-500 mt-8">No training days found.</p>}
+          {currentDays.length === 0 && (
+            <p className="text-center text-muted-foreground mt-8">No training days found.</p>
+          )}
         </div>
       </div>
     );
@@ -279,6 +303,9 @@ function WorkoutContent() {
         total={exercises.length}
         onNext={handleExerciseNext}
         saving={saving}
+        savedRpe={lastSavedRpe}
+        displayUnit={displayUnit}
+        onUnitChange={setDisplayUnit}
       />
     );
   }
@@ -286,42 +313,60 @@ function WorkoutContent() {
   // ── Complete ────────────────────────────────────────────────────────────
   if (step === "complete") {
     const totalTonnage = results.reduce((sum, r) => sum + r.exercise.sets * r.exercise.reps * r.weight, 0);
+    const totalReps = results.reduce((sum, r) => sum + r.exercise.sets * r.exercise.reps, 0);
+    const rpeValues = results.map((r) => r.rpe).filter((v): v is number => v != null);
+    const avgRpe = rpeValues.length > 0
+      ? (rpeValues.reduce((a, b) => a + b, 0) / rpeValues.length).toFixed(1)
+      : null;
 
     return (
       <div className="min-h-screen flex flex-col px-4 py-6 max-w-lg mx-auto">
-        <div className="text-center mb-8">
-          <div className="text-5xl mb-3">&#127947;&#65039;</div>
-          <h1 className="text-2xl font-bold text-zinc-100">Workout Complete</h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            {results.length} exercises logged &middot; {selectedDay}
+        <div className="text-center mb-6">
+          <div className="text-4xl mb-2">🏋️</div>
+          <h1 className="text-2xl font-bold">Workout Complete</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {selectedDay.charAt(0) + selectedDay.slice(1).toLowerCase()} · {results.length} exercises
           </p>
         </div>
 
-        <div className="bg-zinc-800/50 rounded-xl p-4 mb-4 border border-zinc-700/50">
-          <p className="text-xs text-zinc-500 uppercase tracking-wide mb-2">Check-In</p>
+        {/* Stats row */}
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          {[
+            { label: "Tonnage", value: `${totalTonnage.toLocaleString()}`, sub: displayUnit },
+            { label: "Total Reps", value: totalReps.toLocaleString(), sub: "reps" },
+            { label: "Avg RPE", value: avgRpe ?? "–", sub: rpeValues.length > 0 ? `${rpeValues.length} sets` : "none logged" },
+          ].map(({ label, value, sub }) => (
+            <div key={label} className="bg-card rounded-xl p-3 border text-center">
+              <p className="text-xs text-muted-foreground">{label}</p>
+              <p className="text-xl font-bold mt-0.5">{value}</p>
+              <p className="text-xs text-muted-foreground">{sub}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Check-in summary */}
+        <div className="bg-card rounded-xl p-4 mb-4 border">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">Check-In</p>
           <div className="grid grid-cols-5 gap-2 text-center">
             {Object.entries(ratings).map(([cat, val]) => (
               <div key={cat}>
-                <p className="text-lg font-bold text-zinc-100">{val ?? "–"}</p>
-                <p className="text-xs text-zinc-500">{cat}</p>
+                <p className="text-lg font-bold">{val ?? "–"}</p>
+                <p className="text-xs text-muted-foreground">{cat}</p>
               </div>
             ))}
           </div>
         </div>
 
-        <div className="bg-zinc-800/50 rounded-xl p-4 mb-4 border border-zinc-700/50">
-          <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">Session Volume</p>
-          <p className="text-2xl font-bold text-zinc-100">{totalTonnage.toLocaleString()} {loadUnit}</p>
-        </div>
-
-        <div className="bg-zinc-800/50 rounded-xl p-4 mb-6 border border-zinc-700/50">
-          <p className="text-xs text-zinc-500 uppercase tracking-wide mb-3">Exercises</p>
+        {/* Exercise list */}
+        <div className="bg-card rounded-xl p-4 mb-6 border">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">Exercises</p>
           <div className="space-y-2.5">
             {results.map((r, i) => (
               <div key={i} className="flex items-center justify-between text-sm">
-                <span className="text-zinc-300 truncate flex-1 mr-3">{r.exercise.movement}</span>
-                <span className="text-zinc-400 tabular-nums text-right whitespace-nowrap">
-                  {r.weight}{loadUnit} &middot; RPE {r.rpe ?? "–"}
+                <span className="text-foreground truncate flex-1 mr-3">{r.exercise.movement}</span>
+                <span className="text-muted-foreground tabular-nums text-right whitespace-nowrap">
+                  {r.weight > 0 ? `${r.weight} ${displayUnit}` : "BW"}
+                  {r.rpe != null && ` · RPE ${r.rpe}`}
                 </span>
               </div>
             ))}
@@ -331,7 +376,7 @@ function WorkoutContent() {
         <div className="flex-1" />
         <button
           onClick={() => router.push("/dashboard")}
-          className="w-full py-4 rounded-xl text-base font-bold bg-teal-600 text-white hover:bg-teal-500 active:scale-[0.98] transition-all"
+          className="w-full py-4 rounded-xl text-base font-bold bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.98] transition-all"
         >
           Back to Dashboard
         </button>
@@ -346,7 +391,7 @@ export default function WorkoutPage() {
   return (
     <Suspense fallback={
       <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     }>
       <WorkoutContent />
