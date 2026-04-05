@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import RPEPicker from "./rpe-picker";
 import BarbellVisual from "./barbell-visual";
-import { ChevronLeft, ChevronRight, Weight, Eye, EyeOff, Plus, Minus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Weight, Eye, EyeOff, Plus, Minus, FileText } from "lucide-react";
 
 export interface ExerciseData {
   rowIndex: number;
@@ -18,6 +18,7 @@ export interface ExerciseData {
   actualRPE: number | null;
   isBarbell: boolean;
   dropFromLoad: number | null;
+  notes: string | null;
 }
 
 interface ExerciseResult {
@@ -35,10 +36,11 @@ interface ExerciseCardProps {
   savedRpe?: number | null;
   displayUnit: "lbs" | "kg";
   onUnitChange: (u: "lbs" | "kg") => void;
-  priorResult: ExerciseResult | null; // previously logged result for this exercise in this session
+  priorResult: ExerciseResult | null;
+  blockName: string;
+  dayLabel: string;
 }
 
-// Strip coach/classification suffixes from display name
 function cleanMovementName(name: string): string {
   return name.replace(/\s*\((Primary|Secondary|Tertiary|Accessory|Main)\)\s*/i, "").trim();
 }
@@ -54,25 +56,30 @@ export default function ExerciseCard({
   displayUnit,
   onUnitChange,
   priorResult,
+  blockName,
+  dayLabel,
 }: ExerciseCardProps) {
-  const [rpe, setRpe] = useState<number | null>(
-    priorResult?.rpe ?? exercise.actualRPE
-  );
-  const [weight, setWeight] = useState<number | null>(
-    priorResult?.weight != null && priorResult.weight > 0
-      ? priorResult.weight
-      : exercise.load > 0 ? exercise.load : null
-  );
-  const [editingWeight, setEditingWeight] = useState(exercise.load === 0 && !priorResult);
-  const [showBar, setShowBar] = useState(exercise.isBarbell && (exercise.load > 0 || (priorResult?.weight ?? 0) > 0));
-  const [justSaved, setJustSaved] = useState(false);
+  // Seed weight from prior result (going back) or programmed load
+  const seedWeight = priorResult?.weight != null && priorResult.weight > 0
+    ? priorResult.weight
+    : exercise.load > 0 ? exercise.load : null;
 
-  const noWeightProgrammed = exercise.load === 0;
+  const [rpe, setRpe] = useState<number | null>(priorResult?.rpe ?? exercise.actualRPE);
+  const [weight, setWeight] = useState<number | null>(seedWeight);
+  const [editingWeight, setEditingWeight] = useState(exercise.load === 0 && !priorResult);
+  const [showBar, setShowBar] = useState(exercise.isBarbell && seedWeight != null && seedWeight > 0);
+  const [justSaved, setJustSaved] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
+
+  const noWeightProgrammed = exercise.load === 0 && !priorResult;
   const isLast = index === total - 1;
   const canShowBar = exercise.isBarbell && weight != null && weight > 0;
-  const weightForBar = weight ?? 0;
+  // Bug fix: weightChanged compares against seedWeight (what was there when card opened),
+  // not exercise.load — so going back and re-editing correctly detects the change.
+  const weightChanged = weight !== seedWeight;
   const isDropSet = exercise.dropFromLoad != null;
   const displayName = cleanMovementName(exercise.movement);
+  const classification = exercise.movement.match(/\((Primary|Secondary|Tertiary|Accessory|Main)\)/i)?.[1];
 
   useEffect(() => {
     if (saving === false && savedRpe !== undefined) {
@@ -89,14 +96,12 @@ export default function ExerciseCard({
     });
   }
 
-  // Build drop % line if applicable
   function dropLine() {
     if (!isDropSet || !exercise.dropFromLoad) return null;
     const pct = exercise.prescribedRPE?.match(/drop\s*(\d+(?:\.\d+)?)%/i)?.[1];
     return `Drop ${pct}% of ${exercise.dropFromLoad} ${displayUnit} → ${exercise.load} ${displayUnit}`;
   }
 
-  // The RPE string to show, excluding drop lines
   function rpeLabel() {
     if (!exercise.prescribedRPE) return null;
     if (/drop/i.test(exercise.prescribedRPE)) return null;
@@ -104,57 +109,60 @@ export default function ExerciseCard({
   }
 
   return (
-    <div className="flex flex-col min-h-[100dvh] px-4 py-4 max-w-lg mx-auto">
+    <div className="flex flex-col min-h-[100dvh] bg-background">
 
-      {/* Top row: back + counter + unit toggle */}
-      <div className="flex items-center justify-between mb-3">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ChevronLeft className="h-4 w-4" />
-          {index === 0 ? "Check-in" : "Back"}
-        </button>
+      {/* Sticky context header */}
+      <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b px-4 py-2">
+        <div className="flex items-center justify-between max-w-lg mx-auto">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            {index === 0 ? "Check-in" : "Back"}
+          </button>
 
-        <span className="text-xs text-muted-foreground font-medium">
-          {index + 1} / {total}
-        </span>
+          <div className="text-center">
+            <p className="text-xs font-semibold text-foreground">{blockName}</p>
+            <p className="text-xs text-muted-foreground">
+              {dayLabel.charAt(0) + dayLabel.slice(1).toLowerCase()} · {index + 1}/{total}
+            </p>
+          </div>
 
-        <div className="flex items-center gap-0.5 rounded-md border p-0.5 text-xs">
-          {(["lbs", "kg"] as const).map((u) => (
-            <button
-              key={u}
-              onClick={() => onUnitChange(u)}
-              className={`px-2.5 py-1 rounded transition-colors ${
-                displayUnit === u
-                  ? "bg-primary text-primary-foreground font-semibold"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {u}
-            </button>
-          ))}
+          <div className="flex items-center gap-0.5 rounded-md border p-0.5 text-xs">
+            {(["lbs", "kg"] as const).map((u) => (
+              <button
+                key={u}
+                onClick={() => onUnitChange(u)}
+                className={`px-2 py-0.5 rounded transition-colors ${
+                  displayUnit === u
+                    ? "bg-primary text-primary-foreground font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {u}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* Progress bar */}
-      <div className="w-full bg-secondary rounded-full h-1 mb-5">
+      <div className="w-full bg-secondary h-1">
         <div
-          className="bg-primary h-1 rounded-full transition-all duration-300"
+          className="bg-primary h-1 transition-all duration-300"
           style={{ width: `${((index + 1) / total) * 100}%` }}
         />
       </div>
 
-      <div className="flex-1 flex flex-col justify-center space-y-5">
+      {/* Main content */}
+      <div className="flex-1 flex flex-col justify-center px-4 py-5 max-w-lg mx-auto w-full space-y-5">
 
         {/* Movement name */}
-        <div className="text-center space-y-1">
+        <div className="text-center space-y-0.5">
           <h2 className="text-2xl font-bold leading-tight">{displayName}</h2>
-          {/* Show classification subtly if stripped */}
-          {displayName !== exercise.movement && (
-            <p className="text-xs text-muted-foreground/50">
-              {exercise.movement.match(/\((Primary|Secondary|Tertiary|Accessory|Main)\)/i)?.[1]}
-            </p>
+          {classification && (
+            <p className="text-xs text-muted-foreground/50">{classification}</p>
           )}
           {exercise.tempo && (
             <p className="text-xs text-muted-foreground tracking-wide uppercase">
@@ -163,7 +171,7 @@ export default function ExerciseCard({
           )}
         </div>
 
-        {/* Sets × Reps chips + prescribed info */}
+        {/* Sets × Reps + prescription */}
         <div className="flex flex-col items-center gap-2">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 bg-secondary rounded-lg px-4 py-2">
@@ -177,24 +185,36 @@ export default function ExerciseCard({
             </div>
           </div>
 
-          {/* Prescribed RPE / drop info */}
           <div className="text-center space-y-0.5">
-            {rpeLabel() && (
-              <p className="text-sm text-muted-foreground">{rpeLabel()}</p>
-            )}
-            {dropLine() && (
-              <p className="text-sm text-primary/80">{dropLine()}</p>
-            )}
+            {rpeLabel() && <p className="text-sm text-muted-foreground">{rpeLabel()}</p>}
+            {dropLine() && <p className="text-sm text-primary/80">{dropLine()}</p>}
             {exercise.actualRPE != null && !priorResult && (
               <p className="text-xs text-muted-foreground/50">Last logged: RPE {exercise.actualRPE}</p>
             )}
           </div>
+
+          {/* Coach notes */}
+          {exercise.notes && (
+            <div className="w-full">
+              <button
+                onClick={() => setShowNotes(!showNotes)}
+                className="w-full flex items-center justify-center gap-1.5 text-xs text-primary/70 hover:text-primary transition-colors"
+              >
+                <FileText className="h-3 w-3" />
+                {showNotes ? "Hide notes" : "Coach notes"}
+              </button>
+              {showNotes && (
+                <div className="mt-2 px-3 py-2 bg-primary/5 border border-primary/10 rounded-lg text-sm text-foreground/80 text-center">
+                  {exercise.notes}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Weight section */}
         <div className="space-y-3">
           <div className="flex items-center justify-center gap-2">
-            {/* –5 */}
             <button
               onClick={() => adjustWeight(-5)}
               className="h-10 w-10 rounded-full border bg-secondary flex items-center justify-center hover:bg-accent active:scale-95 transition-all"
@@ -202,7 +222,7 @@ export default function ExerciseCard({
               <Minus className="h-4 w-4" />
             </button>
 
-            <div className="flex items-center gap-1.5 min-w-[120px] justify-center">
+            <div className="flex items-center gap-1.5 min-w-[130px] justify-center">
               <Weight className="h-4 w-4 text-muted-foreground shrink-0" />
 
               {editingWeight ? (
@@ -231,7 +251,7 @@ export default function ExerciseCard({
                 >
                   {weight}
                   <span className="text-base font-normal text-muted-foreground ml-0.5">{displayUnit}</span>
-                  {weight !== exercise.load && exercise.load > 0 && (
+                  {weightChanged && exercise.load > 0 && (
                     <span className="text-xs text-primary ml-1.5">(edited)</span>
                   )}
                 </button>
@@ -245,7 +265,6 @@ export default function ExerciseCard({
               )}
             </div>
 
-            {/* +5 */}
             <button
               onClick={() => adjustWeight(5)}
               className="h-10 w-10 rounded-full border bg-secondary flex items-center justify-center hover:bg-accent active:scale-95 transition-all"
@@ -254,7 +273,7 @@ export default function ExerciseCard({
             </button>
           </div>
 
-          {/* Show/Hide plates */}
+          {/* Show/hide plates toggle */}
           {exercise.isBarbell && canShowBar && (
             <div className="text-center">
               <button
@@ -273,9 +292,10 @@ export default function ExerciseCard({
             </p>
           )}
 
+          {/* Barbell visual — updates live as weight changes */}
           {showBar && canShowBar && (
             <div className="border rounded-xl p-3 bg-secondary/40">
-              <BarbellVisual weightLbs={weightForBar} />
+              <BarbellVisual weightLbs={weight!} />
             </div>
           )}
         </div>
@@ -285,7 +305,7 @@ export default function ExerciseCard({
 
         {/* Next button */}
         <Button
-          onClick={() => onNext({ rpe, weight: weight ?? 0, weightChanged: weight !== exercise.load })}
+          onClick={() => onNext({ rpe, weight: weight ?? 0, weightChanged })}
           disabled={saving || (noWeightProgrammed && (weight == null || weight === 0))}
           className="w-full h-12 text-base font-semibold gap-2"
           size="lg"

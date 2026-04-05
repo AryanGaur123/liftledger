@@ -103,7 +103,8 @@ export async function GET(req: Request) {
     prescribedRPE: string | null;
     actualRPE: number | null;
     isBarbell: boolean;
-    dropFromLoad: number | null;  // source weight when load was calculated from Drop X%
+    dropFromLoad: number | null;
+    notes: string | null;        // col 14 coach notes
   }
 
   interface FeedbackSlot {
@@ -150,10 +151,16 @@ export async function GET(req: Request) {
     if (dropMatch && load === 0 && exercises.length > 0) {
       const dropPct = parseFloat(dropMatch[1]) / 100;
       const baseMovement = movement.replace(/\s*\(.*\)\s*$/, "").trim().toLowerCase();
+      // Extract core keyword tokens (e.g. "squat", "bench", "deadlift") for fuzzy matching
+      const tokens = baseMovement.split(/\s+/).filter(t => t.length > 3);
       for (let j = exercises.length - 1; j >= 0; j--) {
         const prev = exercises[j];
         const prevBase = prev.movement.replace(/\s*\(.*\)\s*$/, "").trim().toLowerCase();
-        if (prevBase === baseMovement && prev.load > 0) {
+        // Match if: exact base name OR one contains the other OR they share a key token
+        const exactMatch = prevBase === baseMovement;
+        const containsMatch = prevBase.includes(baseMovement) || baseMovement.includes(prevBase);
+        const tokenMatch = tokens.some(t => prevBase.includes(t));
+        if ((exactMatch || containsMatch || tokenMatch) && prev.load > 0) {
           dropFromLoad = prev.load;
           load = Math.round((prev.load * (1 - dropPct)) / 5) * 5;
           break;
@@ -168,6 +175,7 @@ export async function GET(req: Request) {
       sets, reps, load, loadUnit, prescribedRPE, actualRPE,
       isBarbell: BARBELL_RE.test(movement) && !NOT_BARBELL_RE.test(movement),
       dropFromLoad: dropFromLoad,
+      notes: row[14] != null ? String(row[14]).trim() || null : null,
     });
   }
 

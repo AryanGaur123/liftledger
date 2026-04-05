@@ -33,37 +33,52 @@ const BAR_KG = 20;
 const LBS_TO_KG = 1 / 2.20462;
 const KG_TO_LBS = 2.20462;
 
-function calculatePlates(targetLbs: number): { plates: PlateInfo[]; actualKg: number; actualLbs: number } {
+function calculatePlates(targetLbs: number): {
+  plates: PlateInfo[];
+  perSideKg: number;
+  actualKg: number;
+  actualLbs: number;
+} {
   const targetKg = targetLbs * LBS_TO_KG;
-  let perSide = (targetKg - BAR_KG) / 2;
+  let remaining = (targetKg - BAR_KG) / 2;
 
-  if (perSide <= 0) return { plates: [], actualKg: BAR_KG, actualLbs: BAR_KG * KG_TO_LBS };
+  if (remaining <= 0) {
+    return { plates: [], perSideKg: 0, actualKg: BAR_KG, actualLbs: BAR_KG * KG_TO_LBS };
+  }
 
   const result: PlateInfo[] = [];
   for (const plate of KG_PLATES) {
-    while (perSide >= plate.weight - 0.001) {
+    while (remaining >= plate.weight - 0.001) {
       result.push(plate);
-      perSide -= plate.weight;
+      remaining -= plate.weight;
     }
   }
 
-  const totalPlateKg = result.reduce((sum, p) => sum + p.weight, 0);
-  const actualKg = BAR_KG + totalPlateKg * 2;
+  // perSideKg is the sum of one side's plates (not doubled)
+  const perSideKg = result.reduce((sum, p) => sum + p.weight, 0);
+  const actualKg = BAR_KG + perSideKg * 2;
   const actualLbs = actualKg * KG_TO_LBS;
 
-  // Round up with 1.25 if closer
+  // Check if adding one more 1.25 per side gets closer to target
   const smallest = KG_PLATES[KG_PLATES.length - 1];
   const withExtraKg = actualKg + smallest.weight * 2;
   const withExtraLbs = withExtraKg * KG_TO_LBS;
   if (Math.abs(withExtraLbs - targetLbs) < Math.abs(actualLbs - targetLbs)) {
     result.push(smallest);
-    return { plates: result, actualKg: withExtraKg, actualLbs: withExtraLbs };
+    const newPerSide = perSideKg + smallest.weight;
+    return { plates: result, perSideKg: newPerSide, actualKg: withExtraKg, actualLbs: withExtraLbs };
   }
 
-  return { plates: result, actualKg, actualLbs };
+  return { plates: result, perSideKg, actualKg, actualLbs };
 }
 
-function renderPlateStack(plates: PlateInfo[], startX: number, barY: number, barH: number, reversed: boolean) {
+function renderPlateStack(
+  plates: PlateInfo[],
+  startX: number,
+  barY: number,
+  barH: number,
+  reversed: boolean
+): React.JSX.Element[] {
   const GAP = 2;
   const elements: React.JSX.Element[] = [];
   let x = startX;
@@ -72,20 +87,19 @@ function renderPlateStack(plates: PlateInfo[], startX: number, barY: number, bar
   ordered.forEach((plate, idx) => {
     const y = barY - plate.height / 2 + barH / 2;
     const isLight = plate.color === "#E5E7EB" || plate.color === "#9CA3AF";
+    const rx = reversed ? x - plate.width : x;
     elements.push(
       <g key={idx}>
         <rect
-          x={reversed ? x - plate.width : x}
-          y={y}
-          width={plate.width}
-          height={plate.height}
+          x={rx} y={y}
+          width={plate.width} height={plate.height}
           rx={2}
           fill={plate.color}
           stroke={isLight ? "#D1D5DB" : "none"}
           strokeWidth={isLight ? 1 : 0}
         />
         <text
-          x={(reversed ? x - plate.width : x) + plate.width / 2}
+          x={rx + plate.width / 2}
           y={barY + barH / 2}
           textAnchor="middle"
           dominantBaseline="central"
@@ -103,8 +117,7 @@ function renderPlateStack(plates: PlateInfo[], startX: number, barY: number, bar
 }
 
 export default function BarbellVisual({ weightLbs }: BarbellVisualProps) {
-  const { plates, actualKg, actualLbs } = calculatePlates(weightLbs);
-  const perSideKg = plates.reduce((s, p) => s + p.weight, 0);
+  const { plates, perSideKg, actualKg, actualLbs } = calculatePlates(weightLbs);
   const isExact = Math.abs(actualLbs - weightLbs) < 0.5;
 
   if (weightLbs <= BAR_KG * KG_TO_LBS) {
@@ -115,24 +128,17 @@ export default function BarbellVisual({ weightLbs }: BarbellVisualProps) {
     );
   }
 
-  // Layout: [left plates reversed] [left collar] [bar sleeve] [right collar] [right plates]
   const barY = 55;
   const barH = 8;
   const SVG_H = 120;
-  const sleeveW = 30;    // inner sleeve (where plates go)
-  const shaftW = 20;     // outer end of bar
   const collarW = 10;
-
-  // Calculate total plate stack width
+  const shaftW = 20;
   const GAP = 2;
+
   const stackWidth = plates.reduce((sum, p) => sum + p.width + GAP, 0);
-
-  const leftSleeveX = stackWidth + 4;         // left sleeve starts after left plates
-  const centerBarX = leftSleeveX + sleeveW;   // center (collar + shaft between plates)
-  const rightSleeveX = centerBarX + collarW + shaftW + collarW;
+  const leftSleeveX = stackWidth + 4;
+  const rightSleeveX = leftSleeveX + collarW + shaftW + collarW;
   const totalWidth = rightSleeveX + stackWidth + 4 + 10;
-
-  const rightPlatesX = rightSleeveX;
 
   return (
     <div className="space-y-2">
@@ -142,24 +148,23 @@ export default function BarbellVisual({ weightLbs }: BarbellVisualProps) {
         role="img"
         aria-label={`Barbell: ${actualLbs.toFixed(1)} lbs`}
       >
-        {/* Left outer shaft end */}
+        {/* Left shaft end */}
         <rect x={0} y={barY} width={leftSleeveX} height={barH} rx={2} fill="#9CA3AF" />
         {/* Left collar */}
         <rect x={leftSleeveX} y={barY - 5} width={collarW} height={barH + 10} rx={1} fill="#4B5563" />
-        {/* Center shaft */}
+        {/* Center knurled shaft */}
         <rect x={leftSleeveX + collarW} y={barY + 1} width={shaftW} height={barH - 2} fill="#D1D5DB" />
         {/* Right collar */}
         <rect x={leftSleeveX + collarW + shaftW} y={barY - 5} width={collarW} height={barH + 10} rx={1} fill="#4B5563" />
-        {/* Right outer shaft end */}
+        {/* Right shaft end */}
         <rect x={rightSleeveX} y={barY} width={totalWidth - rightSleeveX} height={barH} rx={2} fill="#9CA3AF" />
 
-        {/* Left plates — mirrored (largest innermost) */}
+        {/* Left plates — reversed so heaviest is nearest collar */}
         {renderPlateStack(plates, leftSleeveX - 4, barY, barH, true)}
-        {/* Right plates — normal order (largest innermost) */}
-        {renderPlateStack(plates, rightPlatesX + 4, barY, barH, false)}
+        {/* Right plates — normal order */}
+        {renderPlateStack(plates, rightSleeveX + 4, barY, barH, false)}
       </svg>
 
-      {/* Weight readout */}
       <div className="text-center space-y-0.5">
         <p className="text-sm font-semibold">
           {actualLbs.toFixed(1)} lbs

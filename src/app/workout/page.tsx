@@ -24,12 +24,12 @@ function WorkoutContent() {
 
   // Block picker
   const [blockSheets, setBlockSheets] = useState<string[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState("");
 
   // Day select
-  const [selectedSheet, setSelectedSheet] = useState("");
   const [weeks, setWeeks] = useState<WeekInfo[]>([]);
   const [selectedWeek, setSelectedWeek] = useState(0);
-  const [loadingDay, setLoadingDay] = useState<string | null>(null); // day label being loaded
+  const [loadingDay, setLoadingDay] = useState<string | null>(null);
 
   // Check-in
   const [ratings, setRatings] = useState<Record<string, number | null>>({
@@ -47,7 +47,26 @@ function WorkoutContent() {
   const [results, setResults] = useState<ExerciseResult[]>([]);
   const [displayUnit, setDisplayUnit] = useState<"lbs" | "kg">("lbs");
 
-  // ── Load block list — auto-select most recent (last) block ───────────────
+  // ── Bug fix #3: loadStructure defined outside useEffect so it doesn't
+  //    rely on a stale closure, and selectedSheet is set via return value ──
+  async function loadStructure(sheetName: string): Promise<boolean> {
+    try {
+      const res = await fetch(`/api/workout/structure?fileId=${fileId}&sheetName=${encodeURIComponent(sheetName)}`);
+      if (!res.ok) throw new Error("Failed to load sheet structure");
+      const data = await res.json();
+      setSelectedSheet(sheetName);
+      setWeeks(data.weeks);
+      // Improvement #8: try to default to the last week (most recent) as a simple heuristic
+      setSelectedWeek(Math.max(0, data.weeks.length - 1));
+      setStep("day-select");
+      return true;
+    } catch (err: any) {
+      setError(err.message);
+      return false;
+    }
+  }
+
+  // ── Load block list ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!fileId) { setError("Missing file info."); return; }
     (async () => {
@@ -55,32 +74,18 @@ function WorkoutContent() {
         const res = await fetch(`/api/workout/blocks?fileId=${fileId}`);
         if (!res.ok) throw new Error("Failed to load sheets");
         const data = await res.json();
-        setBlockSheets(data.blockSheets);
-        // Auto-select the last (most recent) block
-        if (data.blockSheets.length === 1) {
-          await loadStructure(data.blockSheets[data.blockSheets.length - 1]);
+        const sheets: string[] = data.blockSheets;
+        setBlockSheets(sheets);
+        // Auto-advance when there's only one block — pass name directly, no stale closure issue
+        if (sheets.length === 1) {
+          await loadStructure(sheets[0]);
         } else {
           setStep("pick-block");
         }
       } catch (err: any) { setError(err.message); }
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileId]);
-
-  async function loadStructure(sheetName: string) {
-    setSelectedSheet(sheetName);
-    try {
-      const res = await fetch(`/api/workout/structure?fileId=${fileId}&sheetName=${encodeURIComponent(sheetName)}`);
-      if (!res.ok) throw new Error("Failed to load sheet structure");
-      const data = await res.json();
-      setWeeks(data.weeks);
-      setSelectedWeek(0);
-      setStep("day-select");
-    } catch (err: any) { setError(err.message); }
-  }
-
-  async function selectBlock(sheetName: string) {
-    await loadStructure(sheetName);
-  }
 
   // ── Select day → load exercises ─────────────────────────────────────────
   async function selectDay(dayLabel: string, weekIndex: number) {
@@ -95,7 +100,6 @@ function WorkoutContent() {
       setExercises(data.exercises);
       setFeedbackSlots(data.feedbackSlots);
 
-      // Pre-fill ratings from sheet, but always show check-in so athlete can re-rate
       const prior: Record<string, number | null> = {};
       const fresh: Record<string, number | null> = {
         Sleep: null, Stress: null, Nutrition: null, Recovery: null, Strength: null,
@@ -103,14 +107,14 @@ function WorkoutContent() {
       for (const fb of data.feedbackSlots) {
         if (fb.value != null) {
           prior[fb.category] = fb.value;
-          fresh[fb.category] = fb.value; // pre-fill so they just confirm or change
+          fresh[fb.category] = fb.value;
         }
       }
       setPriorRatings(prior);
       setRatings(fresh);
       setCurrentExIdx(0);
       setResults([]);
-      setStep("checkin"); // ALWAYS show check-in
+      setStep("checkin");
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -176,9 +180,9 @@ function WorkoutContent() {
   // ── Render ──────────────────────────────────────────────────────────────
   if (error) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center px-4 text-center">
-        <p className="text-red-400 mb-4">{error}</p>
-        <button onClick={() => router.push("/dashboard")} className="text-teal-400 underline">
+      <div className="min-h-screen flex flex-col items-center justify-center px-4 text-center gap-4">
+        <p className="text-destructive">{error}</p>
+        <button onClick={() => router.push("/dashboard")} className="text-primary underline text-sm">
           Back to Dashboard
         </button>
       </div>
@@ -211,7 +215,7 @@ function WorkoutContent() {
           {blockSheets.map((name, i) => (
             <button
               key={name}
-              onClick={() => selectBlock(name)}
+              onClick={() => loadStructure(name)}
               className="w-full text-left p-4 rounded-xl border border-border bg-card hover:bg-accent hover:border-primary/30 transition-all active:scale-[0.98]"
             >
               <div className="flex items-center justify-between">
@@ -275,9 +279,7 @@ function WorkoutContent() {
                 onClick={() => !loadingDay && selectDay(day.dayLabel, selectedWeek)}
                 disabled={!!loadingDay}
                 className={`w-full text-left p-4 rounded-xl border transition-all active:scale-[0.98] ${
-                  isToday
-                    ? "bg-primary/10 border-primary/40 ring-1 ring-primary/20"
-                    : "bg-card border-border hover:bg-accent"
+                  isToday ? "bg-primary/10 border-primary/40 ring-1 ring-primary/20" : "bg-card border-border hover:bg-accent"
                 } ${loadingDay && !isLoading ? "opacity-40" : ""}`}
               >
                 <div className="flex items-center justify-between">
@@ -289,9 +291,7 @@ function WorkoutContent() {
                   </div>
                   <div className="flex items-center gap-2">
                     {isToday && !isLoading && (
-                      <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded-full">
-                        Today
-                      </span>
+                      <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded-full">Today</span>
                     )}
                     {isLoading
                       ? <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -339,6 +339,8 @@ function WorkoutContent() {
         displayUnit={displayUnit}
         onUnitChange={setDisplayUnit}
         priorResult={results[currentExIdx] ?? null}
+        blockName={selectedSheet}
+        dayLabel={selectedDay}
       />
     );
   }
@@ -353,66 +355,72 @@ function WorkoutContent() {
       : null;
 
     return (
-      <div className="min-h-screen flex flex-col px-4 py-6 max-w-lg mx-auto">
-        <div className="text-center mb-6">
-          <div className="text-4xl mb-2">🏋️</div>
-          <h1 className="text-2xl font-bold">Workout Complete</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {selectedDay.charAt(0) + selectedDay.slice(1).toLowerCase()} · {results.length} exercises
-          </p>
-        </div>
+      // Improvement #9: full-height flex with scrollable middle section
+      <div className="min-h-screen flex flex-col bg-background">
+        {/* Fixed header */}
+        <div className="px-4 pt-6 pb-4 max-w-lg mx-auto w-full">
+          <div className="text-center mb-4">
+            <div className="text-4xl mb-2">🏋️</div>
+            <h1 className="text-2xl font-bold">Workout Complete</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {selectedDay.charAt(0) + selectedDay.slice(1).toLowerCase()} · {results.length} exercises
+            </p>
+          </div>
 
-        {/* Stats row */}
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          {[
-            { label: "Tonnage", value: totalTonnage.toLocaleString(), sub: displayUnit },
-            { label: "Total Reps", value: totalReps.toLocaleString(), sub: "reps" },
-            { label: "Avg RPE", value: avgRpe ?? "–", sub: rpeValues.length > 0 ? `over ${rpeValues.length} lifts` : "none logged" },
-          ].map(({ label, value, sub }) => (
-            <div key={label} className="bg-card rounded-xl p-3 border text-center">
-              <p className="text-xs text-muted-foreground">{label}</p>
-              <p className="text-xl font-bold mt-0.5">{value}</p>
-              <p className="text-xs text-muted-foreground">{sub}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Check-in summary */}
-        <div className="bg-card rounded-xl p-4 mb-4 border">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">Check-In</p>
-          <div className="grid grid-cols-5 gap-2 text-center">
-            {Object.entries(ratings).map(([cat, val]) => (
-              <div key={cat}>
-                <p className="text-lg font-bold">{val ?? "–"}</p>
-                <p className="text-xs text-muted-foreground">{cat}</p>
+          {/* Stats row — always visible */}
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            {[
+              { label: "Tonnage", value: totalTonnage.toLocaleString(), sub: displayUnit },
+              { label: "Total Reps", value: totalReps.toLocaleString(), sub: "reps" },
+              { label: "Avg RPE", value: avgRpe ?? "–", sub: rpeValues.length > 0 ? `${rpeValues.length} lifts` : "none logged" },
+            ].map(({ label, value, sub }) => (
+              <div key={label} className="bg-card rounded-xl p-3 border text-center">
+                <p className="text-xs text-muted-foreground">{label}</p>
+                <p className="text-xl font-bold mt-0.5">{value}</p>
+                <p className="text-xs text-muted-foreground">{sub}</p>
               </div>
             ))}
           </div>
-        </div>
 
-        {/* Exercise list */}
-        <div className="bg-card rounded-xl p-4 mb-5 border">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">Exercises</p>
-          <div className="space-y-2.5">
-            {results.map((r, i) => {
-              const displayName = r.exercise.movement.replace(/\s*\((Primary|Secondary|Tertiary)\)\s*/i, "").trim();
-              return (
-                <div key={i} className="flex items-center justify-between text-sm">
-                  <span className="text-foreground truncate flex-1 mr-3">{displayName}</span>
-                  <span className="text-muted-foreground tabular-nums text-right whitespace-nowrap">
-                    {r.weight > 0 ? `${r.weight} ${displayUnit}` : "BW"}
-                    {r.rpe != null && ` · RPE ${r.rpe}`}
-                  </span>
+          {/* Check-in */}
+          <div className="bg-card rounded-xl p-4 border mb-3">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">Check-In</p>
+            <div className="grid grid-cols-5 gap-2 text-center">
+              {Object.entries(ratings).map(([cat, val]) => (
+                <div key={cat}>
+                  <p className="text-lg font-bold">{val ?? "–"}</p>
+                  <p className="text-xs text-muted-foreground">{cat}</p>
                 </div>
-              );
-            })}
+              ))}
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-col gap-3">
+        {/* Scrollable exercise list */}
+        <div className="flex-1 overflow-y-auto px-4 max-w-lg mx-auto w-full">
+          <div className="bg-card rounded-xl p-4 border mb-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">Exercises</p>
+            <div className="space-y-2.5">
+              {results.map((r, i) => {
+                const name = cleanName(r.exercise.movement);
+                return (
+                  <div key={i} className="flex items-center justify-between text-sm">
+                    <span className="text-foreground truncate flex-1 mr-3">{name}</span>
+                    <span className="text-muted-foreground tabular-nums text-right whitespace-nowrap">
+                      {r.weight > 0 ? `${r.weight} ${displayUnit}` : "BW"}
+                      {r.rpe != null && ` · RPE ${r.rpe}`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Fixed footer buttons */}
+        <div className="px-4 pb-6 pt-3 max-w-lg mx-auto w-full flex flex-col gap-3 border-t bg-background">
           <button
             onClick={() => {
-              // Reset exercise state and go back to day selector
               setCurrentExIdx(0);
               setResults([]);
               setRatings({ Sleep: null, Stress: null, Nutrition: null, Recovery: null, Strength: null });
@@ -434,6 +442,10 @@ function WorkoutContent() {
   }
 
   return null;
+}
+
+function cleanName(movement: string): string {
+  return movement.replace(/\s*\((Primary|Secondary|Tertiary|Accessory|Main)\)\s*/i, "").trim();
 }
 
 export default function WorkoutPage() {
