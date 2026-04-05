@@ -29,11 +29,13 @@ function WorkoutContent() {
   const [selectedSheet, setSelectedSheet] = useState("");
   const [weeks, setWeeks] = useState<WeekInfo[]>([]);
   const [selectedWeek, setSelectedWeek] = useState(0);
+  const [loadingDay, setLoadingDay] = useState<string | null>(null); // day label being loaded
 
   // Check-in
   const [ratings, setRatings] = useState<Record<string, number | null>>({
     Sleep: null, Stress: null, Nutrition: null, Recovery: null, Strength: null,
   });
+  const [priorRatings, setPriorRatings] = useState<Record<string, number | null>>({});
 
   // Exercise
   const [selectedDay, setSelectedDay] = useState("");
@@ -43,11 +45,9 @@ function WorkoutContent() {
   const [saving, setSaving] = useState(false);
   const [lastSavedRpe, setLastSavedRpe] = useState<number | null | undefined>(undefined);
   const [results, setResults] = useState<ExerciseResult[]>([]);
-  const [loadUnit, setLoadUnit] = useState<"lbs" | "kg">("lbs");
-  // Persisted unit display preference across all exercises in the session
   const [displayUnit, setDisplayUnit] = useState<"lbs" | "kg">("lbs");
 
-  // ── Load block list ─────────────────────────────────────────────────────
+  // ── Load block list — auto-select most recent (last) block ───────────────
   useEffect(() => {
     if (!fileId) { setError("Missing file info."); return; }
     (async () => {
@@ -56,13 +56,17 @@ function WorkoutContent() {
         if (!res.ok) throw new Error("Failed to load sheets");
         const data = await res.json();
         setBlockSheets(data.blockSheets);
-        setStep("pick-block");
+        // Auto-select the last (most recent) block
+        if (data.blockSheets.length === 1) {
+          await loadStructure(data.blockSheets[data.blockSheets.length - 1]);
+        } else {
+          setStep("pick-block");
+        }
       } catch (err: any) { setError(err.message); }
     })();
   }, [fileId]);
 
-  // ── Select block → load structure ───────────────────────────────────────
-  async function selectBlock(sheetName: string) {
+  async function loadStructure(sheetName: string) {
     setSelectedSheet(sheetName);
     try {
       const res = await fetch(`/api/workout/structure?fileId=${fileId}&sheetName=${encodeURIComponent(sheetName)}`);
@@ -74,8 +78,13 @@ function WorkoutContent() {
     } catch (err: any) { setError(err.message); }
   }
 
+  async function selectBlock(sheetName: string) {
+    await loadStructure(sheetName);
+  }
+
   // ── Select day → load exercises ─────────────────────────────────────────
   async function selectDay(dayLabel: string, weekIndex: number) {
+    setLoadingDay(dayLabel);
     setSelectedDay(dayLabel);
     try {
       const res = await fetch(
@@ -85,26 +94,28 @@ function WorkoutContent() {
       const data = await res.json();
       setExercises(data.exercises);
       setFeedbackSlots(data.feedbackSlots);
-      setLoadUnit(data.loadUnit);
-      setDisplayUnit(data.loadUnit === "lbs" ? "lbs" : "lbs"); // always default to lbs display
 
-      const existing: Record<string, number | null> = {
+      // Pre-fill ratings from sheet, but always show check-in so athlete can re-rate
+      const prior: Record<string, number | null> = {};
+      const fresh: Record<string, number | null> = {
         Sleep: null, Stress: null, Nutrition: null, Recovery: null, Strength: null,
       };
       for (const fb of data.feedbackSlots) {
-        if (fb.value != null) existing[fb.category] = fb.value;
+        if (fb.value != null) {
+          prior[fb.category] = fb.value;
+          fresh[fb.category] = fb.value; // pre-fill so they just confirm or change
+        }
       }
-      setRatings(existing);
-
-      // Skip check-in if all slots already have ratings from a previous session
-      if (data.checkInComplete) {
-        setCurrentExIdx(0);
-        setResults([]);
-        setStep("exercise");
-      } else {
-        setStep("checkin");
-      }
-    } catch (err: any) { setError(err.message); }
+      setPriorRatings(prior);
+      setRatings(fresh);
+      setCurrentExIdx(0);
+      setResults([]);
+      setStep("checkin"); // ALWAYS show check-in
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoadingDay(null);
+    }
   }
 
   // ── Save feedback ───────────────────────────────────────────────────────
@@ -115,15 +126,11 @@ function WorkoutContent() {
       if (val != null) updates.push({ row: fb.rowIndex, col: 13, value: val });
     }
     if (updates.length > 0) {
-      try {
-        await fetch("/api/workout/save", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fileId, sheetName: selectedSheet, updates }),
-        });
-      } catch { /* non-blocking */ }
+      fetch("/api/workout/save", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileId, sheetName: selectedSheet, updates }),
+      }).catch(() => {});
     }
-    setCurrentExIdx(0);
-    setResults([]);
     setStep("exercise");
   }
 
@@ -146,7 +153,11 @@ function WorkoutContent() {
       } catch { /* non-blocking */ }
     }
 
-    setResults((prev) => [...prev, { exercise: ex, ...data }]);
+    setResults((prev) => {
+      const next = [...prev];
+      next[currentExIdx] = { exercise: ex, ...data };
+      return next;
+    });
     setLastSavedRpe(data.rpe);
     setSaving(false);
 
@@ -155,6 +166,11 @@ function WorkoutContent() {
     } else {
       setStep("complete");
     }
+  }
+
+  function handleExerciseBack() {
+    if (currentExIdx > 0) setCurrentExIdx(currentExIdx - 1);
+    else setStep("checkin");
   }
 
   // ── Render ──────────────────────────────────────────────────────────────
@@ -172,7 +188,7 @@ function WorkoutContent() {
   if (step === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-teal-500" />
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
@@ -192,13 +208,18 @@ function WorkoutContent() {
         </div>
         <p className="text-sm text-muted-foreground mb-4">Select a training block:</p>
         <div className="space-y-2">
-          {blockSheets.map((name) => (
+          {blockSheets.map((name, i) => (
             <button
               key={name}
               onClick={() => selectBlock(name)}
               className="w-full text-left p-4 rounded-xl border border-border bg-card hover:bg-accent hover:border-primary/30 transition-all active:scale-[0.98]"
             >
-              <span className="font-medium">{name}</span>
+              <div className="flex items-center justify-between">
+                <span className="font-medium">{name}</span>
+                {i === blockSheets.length - 1 && (
+                  <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">Most recent</span>
+                )}
+              </div>
             </button>
           ))}
         </div>
@@ -218,8 +239,11 @@ function WorkoutContent() {
             <h1 className="text-xl font-bold">{selectedSheet}</h1>
             <p className="text-sm text-muted-foreground">Pick a training day</p>
           </div>
-          <button onClick={() => setStep("pick-block")} className="text-sm text-muted-foreground hover:text-foreground">
-            ← Blocks
+          <button
+            onClick={() => blockSheets.length > 1 ? setStep("pick-block") : router.push("/dashboard")}
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            ← {blockSheets.length > 1 ? "Blocks" : "Back"}
           </button>
         </div>
 
@@ -244,15 +268,17 @@ function WorkoutContent() {
         <div className="space-y-3">
           {currentDays.map((day) => {
             const isToday = today.startsWith(day.dayLabel.trim().slice(0, 3));
+            const isLoading = loadingDay === day.dayLabel;
             return (
               <button
                 key={day.dayLabel}
-                onClick={() => selectDay(day.dayLabel, selectedWeek)}
+                onClick={() => !loadingDay && selectDay(day.dayLabel, selectedWeek)}
+                disabled={!!loadingDay}
                 className={`w-full text-left p-4 rounded-xl border transition-all active:scale-[0.98] ${
                   isToday
                     ? "bg-primary/10 border-primary/40 ring-1 ring-primary/20"
                     : "bg-card border-border hover:bg-accent"
-                }`}
+                } ${loadingDay && !isLoading ? "opacity-40" : ""}`}
               >
                 <div className="flex items-center justify-between">
                   <div>
@@ -262,14 +288,17 @@ function WorkoutContent() {
                     <p className="text-sm text-muted-foreground">{day.exerciseCount} exercises</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    {isToday && (
+                    {isToday && !isLoading && (
                       <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded-full">
                         Today
                       </span>
                     )}
-                    <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
+                    {isLoading
+                      ? <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      : <svg className="w-4 h-4 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                    }
                   </div>
                 </div>
               </button>
@@ -288,8 +317,10 @@ function WorkoutContent() {
     return (
       <CheckInCard
         ratings={ratings}
+        priorRatings={priorRatings}
         onRate={(cat, val) => setRatings((prev) => ({ ...prev, [cat]: val }))}
         onContinue={saveFeedback}
+        onBack={() => setStep("day-select")}
       />
     );
   }
@@ -302,10 +333,12 @@ function WorkoutContent() {
         index={currentExIdx}
         total={exercises.length}
         onNext={handleExerciseNext}
+        onBack={handleExerciseBack}
         saving={saving}
         savedRpe={lastSavedRpe}
         displayUnit={displayUnit}
         onUnitChange={setDisplayUnit}
+        priorResult={results[currentExIdx] ?? null}
       />
     );
   }
@@ -332,9 +365,9 @@ function WorkoutContent() {
         {/* Stats row */}
         <div className="grid grid-cols-3 gap-3 mb-4">
           {[
-            { label: "Tonnage", value: `${totalTonnage.toLocaleString()}`, sub: displayUnit },
+            { label: "Tonnage", value: totalTonnage.toLocaleString(), sub: displayUnit },
             { label: "Total Reps", value: totalReps.toLocaleString(), sub: "reps" },
-            { label: "Avg RPE", value: avgRpe ?? "–", sub: rpeValues.length > 0 ? `${rpeValues.length} sets` : "none logged" },
+            { label: "Avg RPE", value: avgRpe ?? "–", sub: rpeValues.length > 0 ? `over ${rpeValues.length} lifts` : "none logged" },
           ].map(({ label, value, sub }) => (
             <div key={label} className="bg-card rounded-xl p-3 border text-center">
               <p className="text-xs text-muted-foreground">{label}</p>
@@ -358,28 +391,44 @@ function WorkoutContent() {
         </div>
 
         {/* Exercise list */}
-        <div className="bg-card rounded-xl p-4 mb-6 border">
+        <div className="bg-card rounded-xl p-4 mb-5 border">
           <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">Exercises</p>
           <div className="space-y-2.5">
-            {results.map((r, i) => (
-              <div key={i} className="flex items-center justify-between text-sm">
-                <span className="text-foreground truncate flex-1 mr-3">{r.exercise.movement}</span>
-                <span className="text-muted-foreground tabular-nums text-right whitespace-nowrap">
-                  {r.weight > 0 ? `${r.weight} ${displayUnit}` : "BW"}
-                  {r.rpe != null && ` · RPE ${r.rpe}`}
-                </span>
-              </div>
-            ))}
+            {results.map((r, i) => {
+              const displayName = r.exercise.movement.replace(/\s*\((Primary|Secondary|Tertiary)\)\s*/i, "").trim();
+              return (
+                <div key={i} className="flex items-center justify-between text-sm">
+                  <span className="text-foreground truncate flex-1 mr-3">{displayName}</span>
+                  <span className="text-muted-foreground tabular-nums text-right whitespace-nowrap">
+                    {r.weight > 0 ? `${r.weight} ${displayUnit}` : "BW"}
+                    {r.rpe != null && ` · RPE ${r.rpe}`}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
 
-        <div className="flex-1" />
-        <button
-          onClick={() => router.push("/dashboard")}
-          className="w-full py-4 rounded-xl text-base font-bold bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.98] transition-all"
-        >
-          Back to Dashboard
-        </button>
+        <div className="flex flex-col gap-3">
+          <button
+            onClick={() => {
+              // Reset exercise state and go back to day selector
+              setCurrentExIdx(0);
+              setResults([]);
+              setRatings({ Sleep: null, Stress: null, Nutrition: null, Recovery: null, Strength: null });
+              setStep("day-select");
+            }}
+            className="w-full py-3.5 rounded-xl text-base font-semibold border border-border bg-secondary hover:bg-accent active:scale-[0.98] transition-all"
+          >
+            Log Another Day
+          </button>
+          <button
+            onClick={() => router.push("/dashboard")}
+            className="w-full py-3.5 rounded-xl text-base font-bold bg-primary text-primary-foreground hover:opacity-90 active:scale-[0.98] transition-all"
+          >
+            Back to Dashboard
+          </button>
+        </div>
       </div>
     );
   }

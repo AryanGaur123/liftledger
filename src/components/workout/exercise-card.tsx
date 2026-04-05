@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import RPEPicker from "./rpe-picker";
 import BarbellVisual from "./barbell-visual";
-import { ChevronRight, Weight, Eye, EyeOff, Plus, Minus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Weight, Eye, EyeOff, Plus, Minus } from "lucide-react";
 
 export interface ExerciseData {
   rowIndex: number;
@@ -20,15 +20,27 @@ export interface ExerciseData {
   dropFromLoad: number | null;
 }
 
+interface ExerciseResult {
+  rpe: number | null;
+  weight: number;
+}
+
 interface ExerciseCardProps {
   exercise: ExerciseData;
   index: number;
   total: number;
   onNext: (data: { rpe: number | null; weight: number; weightChanged: boolean }) => void;
+  onBack: () => void;
   saving: boolean;
-  savedRpe?: number | null;   // flash "saved" confirmation
+  savedRpe?: number | null;
   displayUnit: "lbs" | "kg";
   onUnitChange: (u: "lbs" | "kg") => void;
+  priorResult: ExerciseResult | null; // previously logged result for this exercise in this session
+}
+
+// Strip coach/classification suffixes from display name
+function cleanMovementName(name: string): string {
+  return name.replace(/\s*\((Primary|Secondary|Tertiary|Accessory|Main)\)\s*/i, "").trim();
 }
 
 export default function ExerciseCard({
@@ -36,16 +48,23 @@ export default function ExerciseCard({
   index,
   total,
   onNext,
+  onBack,
   saving,
   savedRpe,
   displayUnit,
   onUnitChange,
+  priorResult,
 }: ExerciseCardProps) {
-  const [rpe, setRpe] = useState<number | null>(exercise.actualRPE);
-  const [weight, setWeight] = useState<number | null>(exercise.load > 0 ? exercise.load : null);
-  const [editingWeight, setEditingWeight] = useState(exercise.load === 0);
-  // Auto-show bar on barbell lifts that already have a programmed weight
-  const [showBar, setShowBar] = useState(exercise.isBarbell && exercise.load > 0);
+  const [rpe, setRpe] = useState<number | null>(
+    priorResult?.rpe ?? exercise.actualRPE
+  );
+  const [weight, setWeight] = useState<number | null>(
+    priorResult?.weight != null && priorResult.weight > 0
+      ? priorResult.weight
+      : exercise.load > 0 ? exercise.load : null
+  );
+  const [editingWeight, setEditingWeight] = useState(exercise.load === 0 && !priorResult);
+  const [showBar, setShowBar] = useState(exercise.isBarbell && (exercise.load > 0 || (priorResult?.weight ?? 0) > 0));
   const [justSaved, setJustSaved] = useState(false);
 
   const noWeightProgrammed = exercise.load === 0;
@@ -53,8 +72,8 @@ export default function ExerciseCard({
   const canShowBar = exercise.isBarbell && weight != null && weight > 0;
   const weightForBar = weight ?? 0;
   const isDropSet = exercise.dropFromLoad != null;
+  const displayName = cleanMovementName(exercise.movement);
 
-  // Flash "Saved" after each exercise save
   useEffect(() => {
     if (saving === false && savedRpe !== undefined) {
       setJustSaved(true);
@@ -70,26 +89,37 @@ export default function ExerciseCard({
     });
   }
 
-  // Build the prescription line
-  function prescriptionLine() {
-    const parts: string[] = [`${exercise.sets}×${exercise.reps}`];
-    if (exercise.load > 0) parts.push(`@ ${exercise.load} ${displayUnit}`);
-    if (isDropSet && exercise.dropFromLoad) {
-      const pct = exercise.prescribedRPE?.match(/drop\s*(\d+(?:\.\d+)?)%/i)?.[1];
-      parts.push(`drop ${pct}% of ${exercise.dropFromLoad} ${displayUnit} → ${exercise.load} ${displayUnit}`);
-    } else if (exercise.prescribedRPE && !/drop/i.test(exercise.prescribedRPE)) {
-      parts.push(exercise.prescribedRPE);
-    }
-    return parts.join("  ·  ");
+  // Build drop % line if applicable
+  function dropLine() {
+    if (!isDropSet || !exercise.dropFromLoad) return null;
+    const pct = exercise.prescribedRPE?.match(/drop\s*(\d+(?:\.\d+)?)%/i)?.[1];
+    return `Drop ${pct}% of ${exercise.dropFromLoad} ${displayUnit} → ${exercise.load} ${displayUnit}`;
+  }
+
+  // The RPE string to show, excluding drop lines
+  function rpeLabel() {
+    if (!exercise.prescribedRPE) return null;
+    if (/drop/i.test(exercise.prescribedRPE)) return null;
+    return exercise.prescribedRPE;
   }
 
   return (
     <div className="flex flex-col min-h-[100dvh] px-4 py-4 max-w-lg mx-auto">
-      {/* Progress + unit toggle */}
+
+      {/* Top row: back + counter + unit toggle */}
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs text-muted-foreground">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ChevronLeft className="h-4 w-4" />
+          {index === 0 ? "Check-in" : "Back"}
+        </button>
+
+        <span className="text-xs text-muted-foreground font-medium">
           {index + 1} / {total}
         </span>
+
         <div className="flex items-center gap-0.5 rounded-md border p-0.5 text-xs">
           {(["lbs", "kg"] as const).map((u) => (
             <button
@@ -116,9 +146,16 @@ export default function ExerciseCard({
       </div>
 
       <div className="flex-1 flex flex-col justify-center space-y-5">
-        {/* Movement name + tempo */}
+
+        {/* Movement name */}
         <div className="text-center space-y-1">
-          <h2 className="text-2xl font-bold leading-tight">{exercise.movement}</h2>
+          <h2 className="text-2xl font-bold leading-tight">{displayName}</h2>
+          {/* Show classification subtly if stripped */}
+          {displayName !== exercise.movement && (
+            <p className="text-xs text-muted-foreground/50">
+              {exercise.movement.match(/\((Primary|Secondary|Tertiary|Accessory|Main)\)/i)?.[1]}
+            </p>
+          )}
           {exercise.tempo && (
             <p className="text-xs text-muted-foreground tracking-wide uppercase">
               Tempo {exercise.tempo}
@@ -126,31 +163,46 @@ export default function ExerciseCard({
           )}
         </div>
 
-        {/* Prescription line */}
-        <div className="text-center">
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            {prescriptionLine()}
-          </p>
-          {/* Previous RPE hint */}
-          {exercise.actualRPE != null && (
-            <p className="text-xs text-muted-foreground/60 mt-0.5">
-              Last session: RPE {exercise.actualRPE}
-            </p>
-          )}
+        {/* Sets × Reps chips + prescribed info */}
+        <div className="flex flex-col items-center gap-2">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 bg-secondary rounded-lg px-4 py-2">
+              <span className="text-2xl font-bold tabular-nums">{exercise.sets}</span>
+              <span className="text-muted-foreground font-medium">sets</span>
+            </div>
+            <span className="text-xl text-muted-foreground">×</span>
+            <div className="flex items-center gap-1.5 bg-secondary rounded-lg px-4 py-2">
+              <span className="text-2xl font-bold tabular-nums">{exercise.reps}</span>
+              <span className="text-muted-foreground font-medium">reps</span>
+            </div>
+          </div>
+
+          {/* Prescribed RPE / drop info */}
+          <div className="text-center space-y-0.5">
+            {rpeLabel() && (
+              <p className="text-sm text-muted-foreground">{rpeLabel()}</p>
+            )}
+            {dropLine() && (
+              <p className="text-sm text-primary/80">{dropLine()}</p>
+            )}
+            {exercise.actualRPE != null && !priorResult && (
+              <p className="text-xs text-muted-foreground/50">Last logged: RPE {exercise.actualRPE}</p>
+            )}
+          </div>
         </div>
 
         {/* Weight section */}
         <div className="space-y-3">
           <div className="flex items-center justify-center gap-2">
-            {/* Decrement */}
+            {/* –5 */}
             <button
-              onClick={() => adjustWeight(-2.5)}
-              className="h-9 w-9 rounded-full border bg-secondary flex items-center justify-center hover:bg-accent active:scale-95 transition-all"
+              onClick={() => adjustWeight(-5)}
+              className="h-10 w-10 rounded-full border bg-secondary flex items-center justify-center hover:bg-accent active:scale-95 transition-all"
             >
-              <Minus className="h-3.5 w-3.5" />
+              <Minus className="h-4 w-4" />
             </button>
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 min-w-[120px] justify-center">
               <Weight className="h-4 w-4 text-muted-foreground shrink-0" />
 
               {editingWeight ? (
@@ -164,14 +216,10 @@ export default function ExerciseCard({
                       const v = parseFloat(e.target.value);
                       setWeight(isNaN(v) ? null : v);
                     }}
-                    onBlur={() => {
-                      if (weight != null && weight > 0) setEditingWeight(false);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && weight != null && weight > 0) setEditingWeight(false);
-                    }}
+                    onBlur={() => { if (weight != null && weight > 0) setEditingWeight(false); }}
+                    onKeyDown={(e) => { if (e.key === "Enter" && weight != null && weight > 0) setEditingWeight(false); }}
                     autoFocus
-                    step="2.5"
+                    step="5"
                     className="w-24 h-10 text-center text-xl font-bold bg-secondary border border-primary rounded-md focus:ring-2 focus:ring-primary focus:outline-none"
                   />
                   <span className="text-sm text-muted-foreground">{displayUnit}</span>
@@ -197,16 +245,16 @@ export default function ExerciseCard({
               )}
             </div>
 
-            {/* Increment */}
+            {/* +5 */}
             <button
-              onClick={() => adjustWeight(2.5)}
-              className="h-9 w-9 rounded-full border bg-secondary flex items-center justify-center hover:bg-accent active:scale-95 transition-all"
+              onClick={() => adjustWeight(5)}
+              className="h-10 w-10 rounded-full border bg-secondary flex items-center justify-center hover:bg-accent active:scale-95 transition-all"
             >
-              <Plus className="h-3.5 w-3.5" />
+              <Plus className="h-4 w-4" />
             </button>
           </div>
 
-          {/* Show/Hide Bar */}
+          {/* Show/Hide plates */}
           {exercise.isBarbell && canShowBar && (
             <div className="text-center">
               <button
@@ -220,7 +268,7 @@ export default function ExerciseCard({
           )}
 
           {exercise.isBarbell && !canShowBar && (
-            <p className="text-center text-xs text-muted-foreground/60">
+            <p className="text-center text-xs text-muted-foreground/50">
               Enter weight to see plate loading
             </p>
           )}
@@ -242,17 +290,8 @@ export default function ExerciseCard({
           className="w-full h-12 text-base font-semibold gap-2"
           size="lg"
         >
-          {saving ? (
-            "Saving..."
-          ) : justSaved ? (
-            "Saved ✓"
-          ) : isLast ? (
-            "Finish Workout"
-          ) : (
-            <>
-              Next Exercise
-              <ChevronRight className="h-4 w-4" />
-            </>
+          {saving ? "Saving..." : justSaved ? "Saved ✓" : isLast ? "Finish Workout" : (
+            <>Next Exercise <ChevronRight className="h-4 w-4" /></>
           )}
         </Button>
       </div>
